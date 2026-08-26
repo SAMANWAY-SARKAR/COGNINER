@@ -11,6 +11,9 @@ import 'package:image_picker/image_picker.dart';
 
 // --- GLOBAL SETTINGS STATE --
 
+import 'database_helper.dart'; // Import your new file
+import 'score.dart'; // Import your new ScoreService file
+import 'sync_service.dart'; // --- 1. IMPORT YOUR NEW SERVICE ---
 
 // Import your screens here! Make sure the file names match yours.
 // import 'registration_screen.dart';
@@ -24,24 +27,32 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await EasyLocalization.ensureInitialized();
   
+  // 1. Initialize the SQLite Database
+  final dbHelper = DatabaseHelper.instance;
+  await dbHelper.database; 
+  
   final prefs = await SharedPreferences.getInstance();
   
   // --- SETTINGS DATA ---
-  final isDark = prefs.getBool('isDarkMode') ?? false;
-  final isLarge = prefs.getBool('isLargeText') ?? false;
-  themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
-  textScaleNotifier.value = isLarge ? 1.2 : 1.0;
-
-  // --- LOGIN CHECK ---
-  // If 'user_name' exists in memory, they have already registered!
-  final bool isRegistered = prefs.getString('user_name') != null;
-
+  final isDark = prefs.getBool('isDarkMode') ?? false; //[cite: 2]
+  final isLarge = prefs.getBool('isLargeText') ?? false; //[cite: 2]
+  themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light; //[cite: 2]
+  textScaleNotifier.value = isLarge ? 1.2 : 1.0; //[cite: 2]
+  
+  // --- NEW LOGIN CHECK ---
+  // Check the SQLite database to see if a patient profile exists[cite: 3]
+  final patients = await dbHelper.getAllPatients();
+  final bool isRegistered = patients.isNotEmpty;
+  // --- 2. TRIGGER BACKGROUND SYNC ---
+  // We don't use 'await' here because we want the app to open instantly 
+  // while this runs quietly in the background.
+  SyncService().trySync();
   runApp(
     EasyLocalization(
-      supportedLocales: const [Locale('en'), Locale('hi'), Locale('bn')],
-      path: 'assets/translations',
-      fallbackLocale: const Locale('en'),
-      child: DementiaCareApp(isRegistered: isRegistered), // Pass the check here
+      supportedLocales: const [Locale('en'), Locale('hi'), Locale('bn')], //[cite: 2]
+      path: 'assets/translations', //[cite: 2]
+      fallbackLocale: const Locale('en'), //[cite: 2]
+      child: DementiaCareApp(isRegistered: isRegistered), //[cite: 2]
     ),
   );
 }
@@ -49,7 +60,7 @@ void main() async {
 class DementiaCareApp extends StatelessWidget {
   final bool isRegistered;
   
-  const DementiaCareApp({Key? key, required this.isRegistered}) : super(key: key);
+  const DementiaCareApp({super.key, required this.isRegistered});
 
   @override
   Widget build(BuildContext context) {
@@ -104,7 +115,7 @@ class DementiaCareApp extends StatelessWidget {
 //////////////////////////////////////////////////
 
 class RegistrationScreen extends StatefulWidget {
-  const RegistrationScreen({Key? key}) : super(key: key);
+  const RegistrationScreen({super.key});
 
   @override
   State<RegistrationScreen> createState() => _RegistrationScreenState();
@@ -136,33 +147,42 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   }
 
   Future<void> _saveAndLogin() async {
-    // Basic validation
-    if (nameController.text.isEmpty || emailController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter your Name and Email'), backgroundColor: Colors.red),
+    // Basic validation[cite: 2]
+    if (nameController.text.isEmpty || emailController.text.isEmpty) { //[cite: 2]
+      ScaffoldMessenger.of(context).showSnackBar( //[cite: 2]
+        const SnackBar(content: Text('Please enter your Name and Email'), backgroundColor: Colors.red), //[cite: 2]
       );
-      return;
+      return; //[cite: 2]
     }
 
+    // 1. Save core data to SQLite and get the unique ID[cite: 3]
+    final dbHelper = DatabaseHelper.instance;
+    final String generatedUserId = await dbHelper.insertPatient(
+      name: nameController.text.trim(),
+    );
+
+    // 2. Save the UI details and the new SQLite ID to SharedPreferences[cite: 2, 3]
     final prefs = await SharedPreferences.getInstance();
     
-    // Save all data to the device
-    await prefs.setString('user_name', nameController.text.trim());
-    await prefs.setString('user_email', emailController.text.trim());
-    await prefs.setString('user_phone', phoneController.text.trim());
-    await prefs.setString('user_address', addressController.text.trim());
+    // Save the crucial SQLite ID so the Dashboard and Games know who is playing!
+    await prefs.setString('sqlite_user_id', generatedUserId); 
     
-    if (_base64Image != null) {
-      await prefs.setString('user_photo', _base64Image!);
+    await prefs.setString('user_name', nameController.text.trim()); //[cite: 2]
+    await prefs.setString('user_email', emailController.text.trim()); //[cite: 2]
+    await prefs.setString('user_phone', phoneController.text.trim()); //[cite: 2]
+    await prefs.setString('user_address', addressController.text.trim()); //[cite: 2]
+    
+    if (_base64Image != null) { //[cite: 2]
+      await prefs.setString('user_photo', _base64Image!); //[cite: 2]
     }
-
-    // Navigate to Dashboard after saving
+    // --- NEW: TRY TO SYNC THE NEW PATIENT ---
+    SyncService().trySync();
+    // 3. Navigate to Dashboard[cite: 2]
     if (mounted) {
-      // Replace PatientDashboard() with whatever you named your main screen
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PatientDashboard()));
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PatientDashboard())); //[cite: 2]
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Registration Successful!'), backgroundColor: Colors.green),
+      ScaffoldMessenger.of(context).showSnackBar( //[cite: 2]
+        const SnackBar(content: Text('Registration Successful!'), backgroundColor: Colors.green), //[cite: 2]
       );
     }
   }
@@ -267,73 +287,64 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 //////////////////////////////////////////////////
 
 class PatientDashboard extends StatefulWidget {
-  const PatientDashboard({Key? key}) : super(key: key);
+  const PatientDashboard({super.key});
 
   @override
   State<PatientDashboard> createState() => _PatientDashboardState();
 }
 
 class _PatientDashboardState extends State<PatientDashboard> {
-  // --- Dashboard Data Logic ---
-  int totalStreakDays = 5; 
-  int cumulativeScore = 850; 
-  String userName = "";
-  // Today's specific stats
-  int dailyGameScore = 150; // Fetched from the games played today
-  int routinesCheckedToday = 4; // Fetched from Daily Routine page
-  int routinePoints = 0; 
+  int totalStreakDays = 0; 
+  int cumulativeScore = 0; 
   int totalDailyScore = 0;
+  
+  // --- ADD THESE THREE LINES BACK ---
+  int dailyGameScore = 0; 
+  int routinesCheckedToday = 0; 
+  int routinePoints = 0; 
+  // ----------------------------------
 
-  // Represents the status of the last 7 days (true = maintained streak, false = missed)
-  // Index 0 is 6 days ago, Index 6 is Today.
+  String userName = "Loading...";
+  String userId = ""; 
+
+  // Visual 7-day tracker 
   List<bool> last7DaysStatus = [false, true, true, true, true, true, true];
-  List<String> dayLabels = ['W', 'T', 'F', 'S', 'S', 'M', 'T']; // Example days
+  List<String> dayLabels = ['W', 'T', 'F', 'S', 'S', 'M', 'T']; 
 
   @override
   void initState() {
     super.initState();
-    _loadUserName();
-    _calculateScores();
-    _checkStreakCondition();
+    _loadDashboardData();
   }
 
-  void _calculateScores() {
-    setState(() {
-      // 20 marks for each checked routine work
-      routinePoints = routinesCheckedToday * 20;
-      // Day score = Game scores + Routine scores
-      totalDailyScore = dailyGameScore + routinePoints;
-    });
-  }
-
-  // This is the logic that would run against your saved local data (SharedPreferences)
-  void _checkStreakCondition() {
-    bool appOpenedYesterday = true; // Replace with actual check
-    bool allRoutinesCheckedYesterday = true; // Replace with actual check
-
-    // If they missed a day OR didn't finish routines, reset the streak and cumulative score
-    if (!appOpenedYesterday || !allRoutinesCheckedYesterday) {
-      setState(() {
-        totalStreakDays = 0;
-        cumulativeScore = totalDailyScore; // Resets to only today's score
-        
-        // Update the visual 7-day tracker (mark yesterday as false)
-        last7DaysStatus[5] = false; 
-      });
-    } else {
-      // Add today's score to the cumulative total
-      setState(() {
-        cumulativeScore = (totalStreakDays > 0 ? 850 : 0) + totalDailyScore; 
-      });
-    }
-  }
-
-  Future<void> _loadUserName() async {
+  // This replaces _loadUserName(), _calculateScores(), and _checkStreakCondition()
+  Future<void> _loadDashboardData() async {
     final prefs = await SharedPreferences.getInstance();
+    
     setState(() {
-      // It will use the saved name, or default to "User" if none is found
       userName = prefs.getString('user_name') ?? "User"; 
+      userId = prefs.getString('sqlite_user_id') ?? ""; 
     });
+
+    if (userId.isNotEmpty) {
+      final dbHelper = DatabaseHelper.instance;
+      final patients = await dbHelper.getAllPatients();
+      
+      // Find the currently logged-in patient
+      final patient = patients.firstWhere(
+        (p) => p['user_id'] == userId,
+        orElse: () => {},
+      );
+
+      if (patient.isNotEmpty) {
+        setState(() {
+          // Fetch the real values from SQLite calculated by ScoreService
+          totalStreakDays = patient['current_streak'] ?? 0;
+          cumulativeScore = patient['cumulative_score'] ?? 0;
+          totalDailyScore = patient['daily_score'] ?? 0;
+        });
+      }
+    }
   }
 
   @override
@@ -556,7 +567,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
       onTap: onTap,
       child: Card(
         color: const Color.fromARGB(255, 255, 252, 214),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15),side: BorderSide(color: color.withOpacity(0.3), width: 2)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15),side: BorderSide(color: color.withValues(alpha: 0.3), width: 2)),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1288,11 +1299,22 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
     if (cards[idx1].emoji == cards[idx2].emoji) {
       // Match found
       await Future.delayed(const Duration(milliseconds: 500));
+      
+      int earnedPoints = 10 * level; // Calculate the points earned
+      
       setState(() {
         cards[idx1].isMatched = true;
         cards[idx2].isMatched = true;
-        score += 10 * level;
+        score += earnedPoints; 
       });
+      
+      // --- NEW: RECORD GAME ACTIVITY ---
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('sqlite_user_id') ?? "";
+      if (userId.isNotEmpty) {
+        await ScoreService().recordActivity(userId: userId, earnedPoints: earnedPoints);
+      }
+
       _checkLevelComplete();
     } else {
       // No match
@@ -1739,7 +1761,7 @@ class _DailyRoutineScreenState extends State<DailyRoutineScreen> {
     return '$hour:$minuteStr $period';
   }
 
-  void _markAsDone(int index) {
+  void _markAsDone(int index) async {
     if (tasks[index].isCompleted || tasks[index].isMissed) return;
 
     setState(() {
@@ -1752,6 +1774,17 @@ class _DailyRoutineScreenState extends State<DailyRoutineScreen> {
       tasks[index].completedTime = DateTime.now();
     });
 
+
+    // --- NEW: RECORD ACTIVITY & SCORE ---
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('sqlite_user_id') ?? "";
+    if (userId.isNotEmpty) {
+      final scoreService = ScoreService();
+      // Awards 20 points per task and recalculates the streak
+      await scoreService.recordActivity(userId: userId, earnedPoints: 20);
+    }
+
+    warmMessages.shuffle();
     // Save the changes instantly to the phone
     _saveRoutineData();
 
@@ -1985,7 +2018,7 @@ class MusicFolder {
 // --- MAIN MUSIC LIBRARY SCREEN ---
 
 class MusicLibraryScreen extends StatefulWidget {
-  const MusicLibraryScreen({Key? key}) : super(key: key);
+  const MusicLibraryScreen({super.key});
 
   @override
   State<MusicLibraryScreen> createState() => _MusicLibraryScreenState();
@@ -2197,7 +2230,7 @@ class _MusicLibraryScreenState extends State<MusicLibraryScreen> {
 class FolderDetailScreen extends StatefulWidget {
   final MusicFolder folder;
   
-  const FolderDetailScreen({Key? key, required this.folder}) : super(key: key);
+  const FolderDetailScreen({super.key, required this.folder});
 
   @override
   State<FolderDetailScreen> createState() => _FolderDetailScreenState();
@@ -2304,7 +2337,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({Key? key}) : super(key: key);
+  const AccountScreen({super.key});
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
@@ -2550,7 +2583,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
 
 class LanguageScreen extends StatefulWidget {
-  const LanguageScreen({Key? key}) : super(key: key);
+  const LanguageScreen({super.key});
 
   @override
   State<LanguageScreen> createState() => _LanguageScreenState();
@@ -2704,7 +2737,7 @@ class _LanguageScreenState extends State<LanguageScreen> {
 // final ValueNotifier<double> textScaleNotifier = ...
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({Key? key}) : super(key: key);
+  const SettingsScreen({super.key});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -2820,7 +2853,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               children: [
                 SwitchListTile(
-                  activeColor: Colors.teal,
+                  activeThumbColor: Colors.teal,
                   title: const Text('Dark Mode'),
                   subtitle: const Text('Reduces screen glare'),
                   secondary: Icon(isDarkMode ? Icons.dark_mode : Icons.light_mode, color: Colors.teal),
@@ -2829,7 +2862,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const Divider(height: 1),
                 SwitchListTile(
-                  activeColor: Colors.teal,
+                  activeThumbColor: Colors.teal,
                   title: const Text('Large Text'),
                   subtitle: const Text('Makes words easier to read'),
                   secondary: const Icon(Icons.format_size, color: Colors.teal),
@@ -2850,7 +2883,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
             child: SwitchListTile(
-              activeColor: Colors.teal,
+              activeThumbColor: Colors.teal,
               title: const Text('Daily Reminders'),
               subtitle: const Text('Receive alerts for routine tasks'),
               secondary: const Icon(Icons.notifications_active, color: Colors.teal),
@@ -2894,7 +2927,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
 
 class ContactScreen extends StatelessWidget {
-  const ContactScreen({Key? key}) : super(key: key);
+  const ContactScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -3032,7 +3065,7 @@ class FamilyMember {
 
 // --- MAIN SCREEN ---
 class FamilyScreen extends StatefulWidget {
-  const FamilyScreen({Key? key}) : super(key: key);
+  const FamilyScreen({super.key});
 
   @override
   State<FamilyScreen> createState() => _FamilyScreenState();
@@ -3278,7 +3311,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
 class FamilyMemberDetailScreen extends StatelessWidget {
   final FamilyMember member;
 
-  const FamilyMemberDetailScreen({Key? key, required this.member}) : super(key: key);
+  const FamilyMemberDetailScreen({super.key, required this.member});
 
   @override
   Widget build(BuildContext context) {
@@ -3304,7 +3337,7 @@ class FamilyMemberDetailScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
+                        color: Colors.black.withValues(alpha: 0.2),
                         blurRadius: 10,
                         spreadRadius: 2,
                         offset: const Offset(0, 4),
