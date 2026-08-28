@@ -1,11 +1,9 @@
-// score.dart
-
 import 'database_helper.dart';
-import 'sync_service.dart'; // --- IMPORT HERE ---
+import 'sync_service.dart';
+
 class ScoreService {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
-  /// Recalculates streak, daily score, and cumulative score after a game/activity.
   Future<void> recordActivity({
     required String userId,
     required int earnedPoints,
@@ -15,7 +13,6 @@ class ScoreService {
       (p) => p['user_id'] == userId,
       orElse: () => {},
     );
-
     if (patient.isEmpty) {
       throw Exception('Patient with ID $userId not found in database.');
     }
@@ -29,26 +26,19 @@ class ScoreService {
     int cumulativeScore = patient['cumulative_score'] ?? 0;
 
     if (lastDateStr == null) {
-      // First activity ever
       currentStreak = 1;
       dailyScore = earnedPoints;
     } else if (lastDateStr == todayStr) {
-      // Activity done on the exact same calendar day
       dailyScore += earnedPoints;
     } else {
-      // Calendar day difference logic
       final DateTime lastDate = DateTime.parse(lastDateStr);
       final DateTime today = DateTime.parse(todayStr);
-      
-      // Calculate difference purely based on calendar dates
       final int differenceInDays = today.difference(lastDate).inDays;
 
       if (differenceInDays == 1) {
-        // Consecutive calendar day
         currentStreak += 1;
-        dailyScore = earnedPoints; // Reset daily score baseline for new day
+        dailyScore = earnedPoints;
       } else {
-        // More than 1 day missed: reset streak
         currentStreak = 1;
         dailyScore = earnedPoints;
       }
@@ -63,7 +53,7 @@ class ScoreService {
       currentStreak: currentStreak,
       lastActivityDate: todayStr,
     );
-    // --- NEW: TRY TO SYNC THE UPDATED SCORE ---
+
     SyncService().trySync();
   }
 }

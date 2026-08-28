@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
 import 'dart:async';
 import 'dart:math';
 import 'package:audioplayers/audioplayers.dart';
@@ -7,10 +9,14 @@ import 'dart:convert';
 import 'package:easy_localization/easy_localization.dart';
 import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
-
 import 'database_helper.dart'; 
 import 'score.dart'; 
 import 'sync_service.dart'; 
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
 final ValueNotifier<double> textScaleNotifier = ValueNotifier(1.0);
@@ -18,6 +24,10 @@ final ValueNotifier<double> textScaleNotifier = ValueNotifier(1.0);
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await EasyLocalization.ensureInitialized();
+
+  await NotificationService.instance.init();
+  await NotificationService.instance.scheduleHourlyHydrationReminder();
+  await VoiceAssistantService.instance.init();
   
   final dbHelper = DatabaseHelper.instance;
   await dbHelper.database; 
@@ -577,6 +587,10 @@ class _PatientDashboardState extends State<PatientDashboard> {
   List<bool> last7DaysStatus = [false, false, false, false, false, false, false];
   List<String> dayLabels = ['-', '-', '-', '-', '-', '-', '-']; 
 
+  // Voice Assistant States
+  bool isListening = false;
+  String recognizedText = "";
+
   @override
   void initState() {
     super.initState();
@@ -585,12 +599,9 @@ class _PatientDashboardState extends State<PatientDashboard> {
 
   Future<void> _loadDashboardData() async {
     final prefs = await SharedPreferences.getInstance();
-    
-    // --- 1. Load User Info ---
     String fetchedUserName = prefs.getString('user_name') ?? "User"; 
     String fetchedUserId = prefs.getString('sqlite_user_id') ?? ""; 
 
-    // --- 2. Track App Open Dates for 7-Day Visual ---
     DateTime now = DateTime.now();
     String todayDateString = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
     
@@ -600,14 +611,12 @@ class _PatientDashboardState extends State<PatientDashboard> {
       activeDates = List<String>.from(jsonDecode(activeDatesJson));
     }
     
-    // Mark today as active because they just opened the app!
     if (!activeDates.contains(todayDateString)) {
       activeDates.add(todayDateString);
-      if (activeDates.length > 30) activeDates.removeAt(0); // Keep list small
+      if (activeDates.length > 30) activeDates.removeAt(0); 
       await prefs.setString('active_dates', jsonEncode(activeDates));
     }
 
-    // Generate 7-day booleans and labels dynamically based on the past 7 days
     List<bool> new7DaysStatus = [];
     List<String> newDayLabels = [];
     List<String> weekDays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -620,7 +629,6 @@ class _PatientDashboardState extends State<PatientDashboard> {
       newDayLabels.add(weekDays[pastDay.weekday - 1]);
     }
 
-    // --- 3. Calculate Routines Done Today ---
     int routinesDone = 0;
     String? savedRoutineDate = prefs.getString('routine_date');
     String? savedTasksJson = prefs.getString('routine_tasks');
@@ -634,7 +642,6 @@ class _PatientDashboardState extends State<PatientDashboard> {
       }
     }
 
-    // --- 4. Load Database Scores ---
     int dbCumulative = 0;
     int dbDaily = 0;
     int dbStreak = 0;
@@ -655,26 +662,86 @@ class _PatientDashboardState extends State<PatientDashboard> {
       }
     }
 
-    // --- 5. Update State ---
     setState(() {
       userName = fetchedUserName;
       userId = fetchedUserId;
-      
       last7DaysStatus = new7DaysStatus;
       dayLabels = newDayLabels;
-
       totalStreakDays = dbStreak;
       cumulativeScore = dbCumulative;
       totalDailyScore = dbDaily;
-      
-      // Calculate breakdown metrics
       routinesCheckedToday = routinesDone;
       routinePoints = routinesDone * 20;
-      
-      // Game score is total daily score minus the points earned from routines
       dailyGameScore = totalDailyScore - routinePoints;
-      if (dailyGameScore < 0) dailyGameScore = 0; // Failsafe
+      if (dailyGameScore < 0) dailyGameScore = 0; 
     });
+  }
+
+  // --- NEW: VOICE ASSISTANT LOGIC ---
+  void _listenForVoiceCommand() async {
+    if (isListening) {
+      await VoiceAssistantService.instance.stopListening();
+      setState(() => isListening = false);
+      return;
+    }
+
+    await VoiceAssistantService.instance.startListening(
+      onListeningStatusChanged: (status) {
+        setState(() => isListening = status);
+      },
+      onResult: (text) {
+        setState(() => recognizedText = text);
+        if (!isListening) { 
+          // Process when listening stops naturally
+          _handleVoiceIntent(text);
+        }
+      },
+    );
+  }
+
+  void _handleVoiceIntent(String text) async {
+    if (text.isEmpty) return;
+
+    final intent = VoiceAssistantService.instance.parseIntent(text);
+
+    switch (intent) {
+      case 'start_memory_game':
+        await VoiceAssistantService.instance.speak("Starting memory game.");
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const MemoryGameScreen()))
+            .then((_) => _loadDashboardData());
+        break;
+
+      case 'start_pattern_game':
+        await VoiceAssistantService.instance.speak("Starting pattern game.");
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const PatternRecognitionScreen()))
+            .then((_) => _loadDashboardData());
+        break;
+
+      case 'open_music':
+        await VoiceAssistantService.instance.speak("Opening music therapy.");
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const MusicLibraryScreen()));
+        break;
+
+      case 'open_routine':
+        await VoiceAssistantService.instance.speak("Opening daily routine.");
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const DailyRoutineScreen()))
+            .then((_) => _loadDashboardData());
+        break;
+
+      case 'open_family':
+        await VoiceAssistantService.instance.speak("Opening family gallery.");
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const FamilyScreen()));
+        break;
+
+      default:
+        await VoiceAssistantService.instance.speak("I didn't quite catch that. Try saying 'Start a game' or 'Play music'.");
+        break;
+    }
   }
 
   @override
@@ -693,13 +760,13 @@ class _PatientDashboardState extends State<PatientDashboard> {
               decoration: BoxDecoration(color: Colors.teal),
               child: Text('Menu', style: TextStyle(color: Colors.white, fontSize: 24)),
             ),
-            ListTile(leading: const Icon(Icons.person), title: const Text('Account'), onTap: () {Navigator.pop(context); // Closes the drawer first
+            ListTile(leading: const Icon(Icons.person), title: const Text('Account'), onTap: () {Navigator.pop(context); 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountScreen()));}),
-            ListTile(leading: const Icon(Icons.language), title: const Text('Language Settings'), onTap: () {Navigator.pop(context); // Closes the drawer first
+            ListTile(leading: const Icon(Icons.language), title: const Text('Language Settings'), onTap: () {Navigator.pop(context); 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const LanguageScreen()));}),
-            ListTile(leading: const Icon(Icons.settings), title: const Text('Settings'), onTap: () {Navigator.pop(context); // Closes the drawer first
+            ListTile(leading: const Icon(Icons.settings), title: const Text('Settings'), onTap: () {Navigator.pop(context); 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));}),
-            ListTile(leading: const Icon(Icons.contact_support), title: const Text('Contact Us'), onTap: () {Navigator.pop(context); // Closes the drawer first
+            ListTile(leading: const Icon(Icons.contact_support), title: const Text('Contact Us'), onTap: () {Navigator.pop(context); 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactScreen()));}),
           ],
         ),
@@ -709,8 +776,18 @@ class _PatientDashboardState extends State<PatientDashboard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            
-            // --- STREAK TRACKER CARD ---
+            // Voice Feedback Display
+            if (recognizedText.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16.0),
+                child: Text(
+                  '"$recognizedText"',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 18, fontStyle: FontStyle.italic, color: Colors.teal.shade700),
+                ),
+              ),
+
+            // Streak Tracker Card
             Card(
               elevation: 4,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -721,55 +798,30 @@ class _PatientDashboardState extends State<PatientDashboard> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'Your Streak',
-                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal),
-                        ),
+                        const Text('Your Streak', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal)),
                         Row(
                           children: [
                             const Icon(Icons.local_fire_department, color: Colors.orange, size: 28),
                             const SizedBox(width: 5),
-                            Text(
-                              '$totalStreakDays Days',
-                              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                            ),
+                            Text('$totalStreakDays Days', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                           ],
                         )
                       ],
                     ),
                     const SizedBox(height: 20),
-                    
-                    // 7-Day Visual Tracker
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: List.generate(7, (index) {
                         bool isSuccess = last7DaysStatus[index];
-                        bool isToday = index == 6; // Last item is today
-                        
+                        bool isToday = index == 6; 
                         return Column(
                           children: [
-                            Text(
-                              isToday ? 'Today' : dayLabels[index],
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
-                                color: isToday ? Colors.teal : Colors.grey,
-                              ),
-                            ),
+                            Text(isToday ? 'Today' : dayLabels[index], style: TextStyle(fontSize: 12, fontWeight: isToday ? FontWeight.bold : FontWeight.normal, color: isToday ? Colors.teal : Colors.grey)),
                             const SizedBox(height: 5),
                             Container(
-                              height: 35,
-                              width: 35,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: isSuccess ? Colors.orange.shade100 : Colors.grey.shade200,
-                                border: isToday ? Border.all(color: Colors.teal, width: 2) : null,
-                              ),
-                              child: Icon(
-                                isSuccess ? Icons.local_fire_department : Icons.close,
-                                color: isSuccess ? Colors.orange : Colors.grey.shade400,
-                                size: 20,
-                              ),
+                              height: 35, width: 35,
+                              decoration: BoxDecoration(shape: BoxShape.circle, color: isSuccess ? Colors.orange.shade100 : Colors.grey.shade200, border: isToday ? Border.all(color: Colors.teal, width: 2) : null),
+                              child: Icon(isSuccess ? Icons.local_fire_department : Icons.close, color: isSuccess ? Colors.orange : Colors.grey.shade400, size: 20),
                             ),
                           ],
                         );
@@ -779,10 +831,9 @@ class _PatientDashboardState extends State<PatientDashboard> {
                 ),
               ),
             ),
-            
             const SizedBox(height: 16),
 
-            // --- SCORECARD CARD ---
+            // Scorecard Card
             Card(
               elevation: 4,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -791,66 +842,22 @@ class _PatientDashboardState extends State<PatientDashboard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Scorecard',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal),
-                    ),
+                    const Text('Scorecard', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal)),
                     const Divider(thickness: 1.5),
-                    
-                    // Daily Breakdown
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Game Score (Today):', style: TextStyle(fontSize: 16)),
-                        Text('+$dailyGameScore', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Game Score (Today):', style: TextStyle(fontSize: 16)), Text('+$dailyGameScore', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))]),
                     const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Routine Score ($routinesCheckedToday x 20):', style: const TextStyle(fontSize: 16)),
-                        Text('+$routinePoints', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('Routine Score ($routinesCheckedToday x 20):', style: const TextStyle(fontSize: 16)), Text('+$routinePoints', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))]),
                     const Divider(),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Today\'s Total:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        Text(
-                          '$totalDailyScore', 
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green),
-                        ),
-                      ],
-                    ),
-                    
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Today\'s Total:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), Text('$totalDailyScore', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green))]),
                     const SizedBox(height: 16),
-                    
-                    // Cumulative Score synced with Streak
                     Container(
                       padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.amber.shade100,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
+                      decoration: BoxDecoration(color: Colors.amber.shade100, borderRadius: BorderRadius.circular(10)),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.star, color: Colors.amber, size: 28),
-                              SizedBox(width: 8),
-                              Text(
-                                'Accumulative Score:',
-                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                          Text(
-                            '$cumulativeScore',
-                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87),
-                          ),
+                          const Row(children: [Icon(Icons.star, color: Colors.amber, size: 28), SizedBox(width: 8), Text('Accumulative Score:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))]),
+                          Text('$cumulativeScore', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87)),
                         ],
                       ),
                     ),
@@ -858,10 +865,9 @@ class _PatientDashboardState extends State<PatientDashboard> {
                 ),
               ),
             ),
-            
             const SizedBox(height: 24),
             
-           // --- NAVIGATION GRID ---
+            // Navigation Grid
             GridView.count(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(), 
@@ -882,18 +888,28 @@ class _PatientDashboardState extends State<PatientDashboard> {
                   _buildNavCard(context, 'Family', Icons.family_restroom, const Color.fromARGB(255, 250, 2, 2), onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const FamilyScreen()));
                   }),
-                  // --- NEW REMINDERS BUTTON ---
                   _buildNavCard(context, 'Reminders', Icons.alarm, Colors.orange.shade700, onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const RemindersSelectionScreen()));
                   }),
               ],
             ),
+            const SizedBox(height: 80), // Padding for the floating action button
           ],
         ),
       ),
+      // --- NEW: VOICE ASSISTANT FLOATING BUTTON ---
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: isListening ? Colors.redAccent : Colors.teal,
+        icon: Icon(isListening ? Icons.mic : Icons.mic_none, color: Colors.white),
+        label: Text(
+          isListening ? "Listening..." : "Voice Assistant",
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        onPressed: _listenForVoiceCommand,
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
-
 
   Widget _buildNavCard(BuildContext context, String title, IconData icon, Color color, {VoidCallback? onTap}) {
     return InkWell(
@@ -907,7 +923,6 @@ class _PatientDashboardState extends State<PatientDashboard> {
             Icon(icon, size: 50, color: color),
             const SizedBox(height: 10),
             Text(title,style: TextStyle(fontSize: 18,fontWeight: FontWeight.bold,color: color,),),
- 
           ],
         ),
       ),
@@ -1288,6 +1303,9 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
 }
 
 
+
+
+
 class SongRecognitionScreen extends StatefulWidget {
   const SongRecognitionScreen({super.key});
 
@@ -1297,28 +1315,39 @@ class SongRecognitionScreen extends StatefulWidget {
 
 class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
   int level = 1;
-  int lives = 10; // Increased to 10
+  int lives = 10; 
   int score = 0;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool isPlaying = false;
+  
+  List<Map<String, dynamic>> _masterSongPool = [];
+  Map<String, dynamic>? currentSong;
   List<String> currentOptions = [];
-  late Map<String, String> currentSong;
+  
+  bool _hasGuessedCorrectly = false;
+  String _feedbackMessage = '';
 
-  List<Map<String, String>> shuffledSongs = [];
-  int currentSongIndex = 0;
+  final List<Map<String, dynamic>> appDefaultSongs = [
+    {'name': 'Piano', 'path': 'audio/soft_piano.mp3', 'isLocal': false},
+    {'name': 'Cello', 'path': 'audio/cello_calm.mp3', 'isLocal': false},
+    {'name': 'Birds', 'path': 'audio/forest_birds.mp3', 'isLocal': false},
+    {'name': 'Rain', 'path': 'audio/gentle_rain.mp3', 'isLocal': false},
+    {'name': 'Flute', 'path': 'audio/relaxing_flute.mp3', 'isLocal': false},
+    {'name': 'Ocean', 'path': 'audio/ocean_waves.mp3', 'isLocal': false},
+  ];
 
-  final List<Map<String, String>> songDatabase = [
-    {'path': 'audio/song 1.mp3', 'name': 'First Song Name'},
-    {'path': 'audio/song 2.mp3', 'name': 'Second Song Name'},
-    {'path': 'audio/song 3.mp3', 'name': 'Third Song Name'},
-    {'path': 'audio/song 4.mp3', 'name': 'Fourth Song Name'},
-    {'path': 'audio/song 5.mp3', 'name': 'Fifth Song Name'},
-    {'path': 'audio/song 6.mp3', 'name': 'Sixth Song Name'},
-    {'path': 'audio/song 7.mp3', 'name': 'Seventh Song Name'},
-    {'path': 'audio/song 8.mp3', 'name': 'Eighth Song Name'},
-    {'path': 'audio/song 9.mp3', 'name': 'Ninth Song Name'},
-    {'path': 'audio/song 10.mp3', 'name': 'Tenth Song Name'},
+  final List<String> encouragingMessages = [
+    "That's a great guess! Let's listen a little closer.",
+    "Not quite this one, but you're doing wonderfully! Try another one.",
+    "Good try! Take a deep breath and listen again.",
+    "You are doing a fantastic job. Let's give it one more try!"
+  ];
+
+  final List<String> correctMessages = [
+    "Beautifully done! You got it right! 🌟",
+    "Excellent memory! Spot on! 🎉",
+    "Brilliant! Keep it up! ✨"
   ];
 
   @override
@@ -1333,8 +1362,31 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
       }
     });
 
-    shuffledSongs = List.from(songDatabase);
-    shuffledSongs.shuffle();
+    _initializeGame();
+  }
+
+  Future<void> _initializeGame() async {
+    _masterSongPool = List.from(appDefaultSongs);
+
+    final prefs = await SharedPreferences.getInstance();
+    final String? songsJson = prefs.getString('favourite_songs');
+    if (songsJson != null) {
+      List<dynamic> decoded = jsonDecode(songsJson);
+      for (var item in decoded) {
+        _masterSongPool.add({
+          'name': item['name'],
+          'path': item['path'],
+          'isLocal': true, 
+        });
+      }
+    }
+
+    if (_masterSongPool.length < 4) {
+      setState(() {
+        _feedbackMessage = "Not enough songs to play. Add more favourites!";
+      });
+      return;
+    }
 
     _setupLevel();
   }
@@ -1346,16 +1398,13 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
   }
 
   void _setupLevel() {
-    lives = 10; // Refill 10 stars
+    lives = 10; 
+    _hasGuessedCorrectly = false;
+    _feedbackMessage = '';
 
-    if (currentSongIndex >= shuffledSongs.length) {
-      shuffledSongs = List.from(songDatabase);
-      shuffledSongs.shuffle();
-      currentSongIndex = 0;
-    }
+    _masterSongPool.shuffle();
+    currentSong = _masterSongPool.first;
 
-    currentSong = shuffledSongs[currentSongIndex];
-    currentSongIndex++;
     _generateOptions();
 
     setState(() {});
@@ -1363,56 +1412,59 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
 
   void _generateOptions() {
     currentOptions.clear();
-    currentOptions.add(currentSong['name']!);
+    currentOptions.add(currentSong!['name']);
 
-    List<Map<String, String>> wrongChoices = List.from(songDatabase)
-      ..removeWhere((song) => song['name'] == currentSong['name']);
-    wrongChoices.shuffle();
-
-    for (int i = 0; i < 3; i++) {
-      currentOptions.add(wrongChoices[i]['name']!);
+    Set<String> optionsSet = {currentSong!['name']};
+    int attempts = 0;
+    while (optionsSet.length < 4 && attempts < 20) {
+      optionsSet.add(_masterSongPool[Random().nextInt(_masterSongPool.length)]['name']);
+      attempts++;
     }
-
-    currentOptions.shuffle(); 
+    
+    currentOptions = optionsSet.toList()..shuffle(); 
   }
 
   Future<void> _toggleAudio() async {
+    if (currentSong == null) return;
+
     if (isPlaying) {
       await _audioPlayer.pause();
     } else {
       try {
-        await _audioPlayer.play(AssetSource(currentSong['path']!)); 
+        if (currentSong!['isLocal']) {
+          await _audioPlayer.play(DeviceFileSource(currentSong!['path']));
+        } else {
+          await _audioPlayer.play(AssetSource(currentSong!['path'])); 
+        }
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
-           SnackBar(content: Text('Audio file "${currentSong['path']}" not found. Add real paths!')),
+           SnackBar(content: Text('Audio file "${currentSong!['path']}" not found.')),
         );
       }
     }
   }
 
-  // Added 'async' here so we can await SharedPreferences
   void _checkAnswer(String selectedName) async { 
-    if (selectedName == currentSong['name']) {
+    if (_hasGuessedCorrectly || lives <= 0) return;
+
+    if (selectedName == currentSong!['name']) {
       _audioPlayer.stop();
+      _hasGuessedCorrectly = true;
       
-      int earnedPoints = 10 * level; // Calculate points
+      int earnedPoints = 10 * level; 
 
       setState(() {
         score += earnedPoints;
+        _feedbackMessage = correctMessages[Random().nextInt(correctMessages.length)];
       });
 
-      // --- SAVE TO DATABASE ---
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString('sqlite_user_id') ?? "";
       if (userId.isNotEmpty) {
         await ScoreService().recordActivity(userId: userId, earnedPoints: earnedPoints);
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Correct! Great job!'), backgroundColor: Colors.green),
-      );
-
-      Future.delayed(const Duration(seconds: 1), () {
+      Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
             level++;
             _setupLevel();
@@ -1427,9 +1479,9 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
         _audioPlayer.stop();
         _gameOver();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Not quite. Try listening again!'), backgroundColor: Colors.orange),
-        );
+        setState(() {
+          _feedbackMessage = encouragingMessages[Random().nextInt(encouragingMessages.length)];
+        });
       }
     }
   }
@@ -1479,9 +1531,10 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
           )
         ],
       ),
-      body: Column(
+      body: _masterSongPool.length < 4 
+        ? Center(child: Text(_feedbackMessage, style: const TextStyle(fontSize: 18)))
+        : Column(
         children: [
-          // 10 Lives Display with Wrap
           Padding(
             padding: const EdgeInsets.all(12.0),
             child: Wrap(
@@ -1524,6 +1577,16 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: currentOptions.map((optionName) {
+                final bool isCorrect = _hasGuessedCorrectly && optionName == currentSong!['name'];
+
+                Color btnColor = Colors.white;
+                Color txtColor = Colors.teal.shade800;
+
+                if (isCorrect) {
+                  btnColor = Colors.green.shade100;
+                  txtColor = Colors.green.shade900;
+                } 
+
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12.0),
                   child: ElevatedButton(
@@ -1532,9 +1595,9 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(15),
                       ),
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.teal,
-                      elevation: 2,
+                      backgroundColor: btnColor,
+                      foregroundColor: txtColor,
+                      elevation: 2, 
                     ),
                     onPressed: () => _checkAnswer(optionName),
                     child: Text(
@@ -1546,7 +1609,20 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
               }).toList(),
             ),
           ),
-          const SizedBox(height: 20),
+
+          if (_feedbackMessage.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 20.0, left: 16, right: 16),
+              child: Text(
+                _feedbackMessage,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: _hasGuessedCorrectly ? Colors.green : Colors.teal.shade700,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1564,16 +1640,20 @@ class MemoryGameScreen extends StatefulWidget {
 
 class _MemoryGameScreenState extends State<MemoryGameScreen> {
   int level = 1;
-  int lives = 10; // Increased to 10
+  int lives = 10;
   int score = 0;
   List<MemoryCard> cards = [];
   List<int> flippedIndices = [];
   bool isProcessing = false;
 
+  // Expanded to 30 emojis to safely support up to Level 15 (60 cards / 30 pairs)
   final List<String> allEmojis = [
     '🎵', '🌸', '😊', '🎲', '🐟', 
     '⚽', '❤️', '🔥', '👑', '🐱', 
-    '🍃', '🌍', '☀️', '🍎', '🚗'
+    '🍃', '🌍', '☀️', '🍎', '🚗',
+    '⭐', '🎈', '🍕', '🚀', '💎',
+    '🎸', '🧩', '🦋', '🍦', '🚲',
+    '🧸', '🌻', '🍩', '🏀', '🐢'
   ];
 
   @override
@@ -1583,12 +1663,20 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
   }
 
   void _setupLevel() {
-    int cardCount = (level == 1) ? 4 : (level == 2) ? 8 : 16;
+    // Dynamically increase by 4 tiles every level (4, 8, 12, 16, 20...)
+    int cardCount = level * 4;
+    
+    // Safety check: Prevent crashing if the user somehow beats Level 15
+    int pairsNeeded = cardCount ~/ 2;
+    if (pairsNeeded > allEmojis.length) {
+      pairsNeeded = allEmojis.length;
+      cardCount = pairsNeeded * 2;
+    }
     
     List<String> currentLevelEmojis = List.from(allEmojis)..shuffle();
     
     cards.clear();
-    for (int i = 0; i < cardCount / 2; i++) {
+    for (int i = 0; i < pairsNeeded; i++) {
       String selectedEmoji = currentLevelEmojis[i];
       cards.add(MemoryCard(emoji: selectedEmoji));
       cards.add(MemoryCard(emoji: selectedEmoji)); 
@@ -1691,6 +1779,11 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Adjust layout based on how many cards exist
+    int crossAxisCount = 4;
+    if (cards.length <= 4) crossAxisCount = 2;
+    else if (cards.length == 12) crossAxisCount = 3;
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Memory Game - Level $level'),
@@ -1705,7 +1798,6 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
       ),
       body: Column(
         children: [
-          // 10 Lives Display with Wrap
           Padding(
             padding: const EdgeInsets.all(12.0),
             child: Wrap(
@@ -1722,7 +1814,7 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
             child: GridView.builder(
               padding: const EdgeInsets.all(16),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: level >= 3 ? 4 : 2, 
+                crossAxisCount: crossAxisCount, 
                 crossAxisSpacing: 10,
                 mainAxisSpacing: 10,
               ),
@@ -1730,6 +1822,9 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
               itemBuilder: (context, index) {
                 if (cards[index].isMatched) return const SizedBox.shrink(); 
                 
+                // Shrink emoji font size as grid gets denser
+                double emojiSize = cards.length > 20 ? 30 : (cards.length >= 12 ? 40 : 60);
+
                 return GestureDetector(
                   onTap: () => _onCardTap(index),
                   child: AnimatedContainer(
@@ -1748,12 +1843,12 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
                       child: cards[index].isFlipped
                           ? Text(
                               cards[index].emoji,
-                              style: TextStyle(fontSize: level >= 3 ? 40 : 60), 
+                              style: TextStyle(fontSize: emojiSize), 
                             )
-                          : const Icon(
+                          : Icon(
                               Icons.help_outline, 
                               color: Colors.white54, 
-                              size: 40
+                              size: emojiSize * 0.7,
                             ),
                     ),
                   ),
@@ -1767,7 +1862,6 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
   }
 }
 
-// Updated MemoryCard class to hold Strings (emojis) instead of Colors
 class MemoryCard {
   final String emoji;
   bool isFlipped;
@@ -1999,20 +2093,8 @@ class DailyRoutineScreen extends StatefulWidget {
 
 class _DailyRoutineScreenState extends State<DailyRoutineScreen> {
   List<RoutineTask> tasks = [];
-  
-  // The default clean slate of tasks
-  final List<RoutineTask> defaultTasks = [
-    RoutineTask(title: 'Morning stretch & wake up', scheduledTime: '08:00 AM'),
-    RoutineTask(title: 'Brush teeth & wash face', scheduledTime: '08:30 AM'),
-    RoutineTask(title: 'Eat a healthy breakfast', scheduledTime: '09:00 AM'),
-    RoutineTask(title: 'Take morning medication', scheduledTime: '09:30 AM'),
-    RoutineTask(title: 'Play a memory game', scheduledTime: '11:00 AM'),
-    RoutineTask(title: 'Eat lunch & drink water', scheduledTime: '01:00 PM'),
-    RoutineTask(title: 'Listen to calming music', scheduledTime: '03:00 PM'),
-    RoutineTask(title: 'Short evening walk', scheduledTime: '05:00 PM'),
-    RoutineTask(title: 'Eat dinner', scheduledTime: '07:30 PM'),
-    RoutineTask(title: 'Get ready for bed', scheduledTime: '09:30 PM'),
-  ];
+  bool isLoading = true;
+  bool isEditMode = false;
 
   final List<String> warmMessages = [
     "Wonderful job! One step at a time. 🌟",
@@ -2024,15 +2106,40 @@ class _DailyRoutineScreenState extends State<DailyRoutineScreen> {
   @override
   void initState() {
     super.initState();
-    // Load data as soon as the screen opens
     _loadRoutineData();
   }
 
-  // --- NEW: Local Storage & Reset Logic ---
+  // --- HELPER: Sort tasks chronologically by time ---
+  void _sortTasksByTime() {
+    tasks.sort((a, b) {
+      DateTime timeA = _parseTimeString(a.scheduledTime);
+      DateTime timeB = _parseTimeString(b.scheduledTime);
+      return timeA.compareTo(timeB);
+    });
+  }
+
+  // Converts strings like "06:30 AM" or "02:15 PM" into comparable DateTime objects
+  DateTime _parseTimeString(String timeStr) {
+    try {
+      final parts = timeStr.split(' ');
+      final timeParts = parts[0].split(':');
+      int hour = int.parse(timeParts[0]);
+      int minute = int.parse(timeParts[1]);
+      String period = parts.length > 1 ? parts[1].toUpperCase() : 'AM';
+
+      if (period == 'PM' && hour < 12) hour += 12;
+      if (period == 'AM' && hour == 12) hour = 0;
+
+      final now = DateTime.now();
+      return DateTime(now.year, now.month, now.day, hour, minute);
+    } catch (e) {
+      return DateTime.now(); // Fallback if parsing fails
+    }
+  }
+
   Future<void> _loadRoutineData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // Get the current date in a simple string format (e.g., "2026-08-25")
     DateTime now = DateTime.now();
     String todayDateString = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
     
@@ -2040,42 +2147,49 @@ class _DailyRoutineScreenState extends State<DailyRoutineScreen> {
     String? savedTasksJson = prefs.getString('routine_tasks');
 
     if (savedDate == todayDateString && savedTasksJson != null) {
-      // It's still the same day! Load the saved progress.
       List<dynamic> decodedList = jsonDecode(savedTasksJson);
       setState(() {
         tasks = decodedList.map((item) => RoutineTask.fromJson(item)).toList();
+        _sortTasksByTime(); // Sort on load
+        isLoading = false;
       });
-    } else {
-      // It's a NEW DAY (or first time opening)! Reset everything.
+    } else if (savedTasksJson != null) {
+      List<dynamic> decodedList = jsonDecode(savedTasksJson);
       setState(() {
-        // Deep copy the default tasks so we have a fresh slate
-        tasks = defaultTasks.map((t) => RoutineTask(
-          title: t.title, 
-          scheduledTime: t.scheduledTime
-        )).toList();
+        tasks = decodedList.map((item) {
+          RoutineTask t = RoutineTask.fromJson(item);
+          t.isCompleted = false;
+          t.isMissed = false;
+          t.completedTime = null;
+          return t;
+        }).toList();
+        _sortTasksByTime(); // Sort on load
+        isLoading = false;
       });
-      // Save the new date so it doesn't reset again today
       await prefs.setString('routine_date', todayDateString);
       _saveRoutineData();
+    } else {
+      setState(() {
+        tasks = []; 
+        isLoading = false;
+      });
+      await prefs.setString('routine_date', todayDateString);
     }
   }
 
   Future<void> _saveRoutineData() async {
+    _sortTasksByTime(); // Ensure they are sorted before saving
     final prefs = await SharedPreferences.getInstance();
-    // Convert our list of tasks into JSON text to save it
     List<Map<String, dynamic>> jsonList = tasks.map((t) => t.toJson()).toList();
     await prefs.setString('routine_tasks', jsonEncode(jsonList));
   }
-  // -----------------------------------------
 
   String _formatTime(DateTime time) {
     int hour = time.hour;
     int minute = time.minute;
     String period = hour >= 12 ? 'PM' : 'AM';
-    
     if (hour > 12) hour -= 12;
     if (hour == 0) hour = 12;
-    
     String minuteStr = minute.toString().padLeft(2, '0');
     return '$hour:$minuteStr $period';
   }
@@ -2087,24 +2201,26 @@ class _DailyRoutineScreenState extends State<DailyRoutineScreen> {
       for (int i = 0; i < index; i++) {
         if (!tasks[i].isCompleted && !tasks[i].isMissed) {
           tasks[i].isMissed = true;
+          
+          // --- NEW: SEND ALERT TO CAREGIVER ---
+          CaregiverAlertService.sendMissedAlert(
+            'Routine', 
+            tasks[i].title, 
+            tasks[i].scheduledTime
+          );
         }
       }
       tasks[index].isCompleted = true;
       tasks[index].completedTime = DateTime.now();
     });
 
-
-    // --- NEW: RECORD ACTIVITY & SCORE ---
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString('sqlite_user_id') ?? "";
     if (userId.isNotEmpty) {
       final scoreService = ScoreService();
-      // Awards 20 points per task and recalculates the streak
       await scoreService.recordActivity(userId: userId, earnedPoints: 20);
     }
 
-    warmMessages.shuffle();
-    // Save the changes instantly to the phone
     _saveRoutineData();
 
     warmMessages.shuffle();
@@ -2124,10 +2240,117 @@ class _DailyRoutineScreenState extends State<DailyRoutineScreen> {
     );
   }
 
+  void _showRoutineDialog({RoutineTask? existingTask, int? index}) {
+    TextEditingController titleController = TextEditingController(text: existingTask?.title ?? '');
+    TimeOfDay selectedTime = TimeOfDay.now();
+    String timeString = existingTask?.scheduledTime ?? '';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(existingTask == null ? 'Add Daily Routine' : 'Edit Routine'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(
+                      labelText: 'Routine Name (e.g., Breakfast)', 
+                      border: OutlineInputBorder()
+                    ),
+                    textCapitalization: TextCapitalization.sentences,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.access_time, color: Colors.teal),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          timeString.isEmpty ? 'Select Time' : timeString, 
+                          style: const TextStyle(fontSize: 16)
+                        ),
+                      ),
+                      ElevatedButton(
+                        onPressed: () async {
+                          final TimeOfDay? time = await showTimePicker(
+                            context: context, 
+                            initialTime: selectedTime
+                          );
+                          if (time != null) {
+                            setDialogState(() {
+                              selectedTime = time;
+                              timeString = time.format(context); 
+                            });
+                          }
+                        },
+                        child: const Text('Pick Time'),
+                      )
+                    ],
+                  )
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context), 
+                  child: const Text('Cancel')
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+                  onPressed: () {
+                    if (titleController.text.trim().isNotEmpty && timeString.isNotEmpty) {
+                      setState(() {
+                        if (existingTask == null) {
+                          tasks.add(RoutineTask(title: titleController.text.trim(), scheduledTime: timeString));
+                        } else {
+                          tasks[index!].title = titleController.text.trim();
+                          tasks[index].scheduledTime = timeString;
+                        }
+                        _sortTasksByTime(); // Automatically re-sort after adding/editing
+                      });
+                      _saveRoutineData(); 
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Save'),
+                )
+              ],
+            );
+          }
+        );
+      },
+    );
+  }
+
+  void _deleteRoutine(int index) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Routine?'),
+        content: const Text('Are you sure you want to permanently remove this task?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () {
+              setState(() => tasks.removeAt(index));
+              _saveRoutineData();
+              Navigator.pop(context);
+            },
+            child: const Text('Delete'),
+          )
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Show a loading circle if tasks haven't loaded from memory yet
-    if (tasks.isEmpty) {
+    if (isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
@@ -2138,143 +2361,198 @@ class _DailyRoutineScreenState extends State<DailyRoutineScreen> {
       appBar: AppBar(
         title: const Text('Daily Routine'),
         centerTitle: true,
+        actions: [
+          if (isEditMode)
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  isEditMode = false;
+                });
+              },
+              child: const Text('Done', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            )
+        ],
       ),
-      body: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            color: Colors.teal.shade50,
-            child: Column(
+      body: tasks.isEmpty 
+          ? Center(
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
+                ),
+                icon: const Icon(Icons.add, color: Colors.white, size: 28),
+                label: const Text('Add Daily Routine', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                onPressed: () {
+                  setState(() => isEditMode = true);
+                  _showRoutineDialog();
+                },
+              )
+            )
+          : Column(
               children: [
-                Text(
-                  'Great day! You have completed $completedCount of ${tasks.length} routines.',
-                  style: const TextStyle(fontSize: 18, color: Colors.teal, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 15),
-                LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 12,
-                  backgroundColor: Colors.teal.shade100,
-                  color: Colors.teal,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ],
-            ),
-          ),
-          
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: tasks.length,
-              itemBuilder: (context, index) {
-                final task = tasks[index];
-                
-                Color cardColor = Colors.white;
-                Color borderColor = Colors.transparent;
-                Color iconBgColor = Colors.grey.shade200;
-                Color iconColor = Colors.grey.shade400;
-                IconData iconData = Icons.check;
-                Color titleColor = Colors.black87;
-                TextDecoration textDecoration = TextDecoration.none;
-
-                if (task.isCompleted) {
-                  cardColor = Colors.green.shade50;
-                  borderColor = Colors.green.shade300;
-                  iconBgColor = Colors.green;
-                  iconColor = Colors.white;
-                  iconData = Icons.check;
-                  titleColor = Colors.grey.shade600;
-                  textDecoration = TextDecoration.lineThrough;
-                } else if (task.isMissed) {
-                  cardColor = Colors.red.shade50;
-                  borderColor = Colors.red.shade300;
-                  iconBgColor = Colors.red.shade300;
-                  iconColor = Colors.white;
-                  iconData = Icons.close;
-                  titleColor = Colors.red.shade400;
-                  textDecoration = TextDecoration.lineThrough;
-                }
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12.0),
-                  child: InkWell(
-                    onTap: () => _markAsDone(index),
-                    borderRadius: BorderRadius.circular(15),
-                    child: Card(
-                      elevation: (task.isCompleted || task.isMissed) ? 1 : 4,
-                      color: cardColor,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                        side: BorderSide(color: borderColor, width: 2),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  color: Colors.teal.shade50,
+                  child: Column(
+                    children: [
+                      Text(
+                        'Great day! You have completed $completedCount of ${tasks.length} routines.',
+                        style: const TextStyle(fontSize: 18, color: Colors.teal, fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                        child: Row(
-                          children: [
-                            Container(
-                              height: 40,
-                              width: 40,
-                              decoration: BoxDecoration(shape: BoxShape.circle, color: iconBgColor),
-                              child: Icon(iconData, color: iconColor, size: 28),
+                      const SizedBox(height: 15),
+                      LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 12,
+                        backgroundColor: Colors.teal.shade100,
+                        color: Colors.teal,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: tasks.length,
+                    itemBuilder: (context, index) {
+                      final task = tasks[index];
+                      
+                      Color cardColor = Colors.white;
+                      Color borderColor = Colors.transparent;
+                      Color iconBgColor = Colors.grey.shade200;
+                      Color iconColor = Colors.grey.shade400;
+                      IconData iconData = Icons.check;
+                      Color titleColor = Colors.black87;
+                      TextDecoration textDecoration = TextDecoration.none;
+
+                      if (task.isCompleted) {
+                        cardColor = Colors.green.shade50;
+                        borderColor = Colors.green.shade300;
+                        iconBgColor = Colors.green;
+                        iconColor = Colors.white;
+                        iconData = Icons.check;
+                        titleColor = Colors.grey.shade600;
+                        textDecoration = TextDecoration.none;
+                      } else if (task.isMissed) {
+                        cardColor = Colors.red.shade50;
+                        borderColor = Colors.red.shade300;
+                        iconBgColor = Colors.red.shade300;
+                        iconColor = Colors.white;
+                        iconData = Icons.close;
+                        titleColor = Colors.red.shade400;
+                        textDecoration = TextDecoration.lineThrough;
+                      }
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12.0),
+                        child: InkWell(
+                          onTap: isEditMode ? null : () => _markAsDone(index),
+                          borderRadius: BorderRadius.circular(15),
+                          child: Card(
+                            elevation: (task.isCompleted || task.isMissed) ? 1 : 4,
+                            color: cardColor,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15),
+                              side: BorderSide(color: borderColor, width: 2),
                             ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                              child: Row(
                                 children: [
-                                  Text(
-                                    task.title,
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: titleColor,
-                                      decoration: textDecoration,
+                                  Container(
+                                    height: 40,
+                                    width: 40,
+                                    decoration: BoxDecoration(shape: BoxShape.circle, color: iconBgColor),
+                                    child: Icon(iconData, color: iconColor, size: 28),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          task.title,
+                                          style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                            color: titleColor,
+                                            decoration: textDecoration,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Scheduled: ${task.scheduledTime}',
+                                          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                                        ),
+                                        if (task.isCompleted && task.completedTime != null)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 4.0),
+                                            child: Text(
+                                              'Completed at: ${_formatTime(task.completedTime!)}',
+                                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.green),
+                                            ),
+                                          ),
+                                        if (task.isMissed)
+                                          const Padding(
+                                            padding: EdgeInsets.only(top: 4.0),
+                                            child: Text(
+                                              'Missed',
+                                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.red),
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Scheduled: ${task.scheduledTime}',
-                                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                                  ),
-                                  if (task.isCompleted && task.completedTime != null)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 4.0),
-                                      child: Text(
-                                        'Completed at: ${_formatTime(task.completedTime!)}',
-                                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.green),
-                                      ),
+                                  if (isEditMode && !task.isCompleted && !task.isMissed) ...[
+                                    IconButton(
+                                      icon: const Icon(Icons.edit, color: Colors.blueGrey),
+                                      onPressed: () => _showRoutineDialog(existingTask: task, index: index),
                                     ),
-                                  if (task.isMissed)
-                                    const Padding(
-                                      padding: EdgeInsets.only(top: 4.0),
-                                      child: Text(
-                                        'Missed',
-                                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.red),
-                                      ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete, color: Colors.redAccent),
+                                      onPressed: () => _deleteRoutine(index),
                                     ),
+                                  ]
                                 ],
                               ),
                             ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
-                );
-              },
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
+      floatingActionButton: tasks.isEmpty
+          ? null
+          : isEditMode
+              ? FloatingActionButton.extended(
+                  backgroundColor: Colors.teal,
+                  onPressed: () => _showRoutineDialog(),
+                  icon: const Icon(Icons.add, color: Colors.white),
+                  label: const Text('Add Task', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                )
+              : FloatingActionButton.extended(
+                  backgroundColor: Colors.teal,
+                  onPressed: () {
+                    setState(() {
+                      isEditMode = true;
+                    });
+                  },
+                  icon: const Icon(Icons.edit, color: Colors.white),
+                  label: const Text('Edit Daily Routine', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
     );
   }
 }
 
-// Updated Data Model with JSON Conversion for Local Storage
 class RoutineTask {
-  final String title;
-  final String scheduledTime;
+  String title;
+  String scheduledTime;
   bool isCompleted;
   bool isMissed;
   DateTime? completedTime;
@@ -2287,7 +2565,6 @@ class RoutineTask {
     this.completedTime,
   });
 
-  // Convert object to JSON to save to phone memory
   Map<String, dynamic> toJson() => {
         'title': title,
         'scheduledTime': scheduledTime,
@@ -2296,7 +2573,6 @@ class RoutineTask {
         'completedTime': completedTime?.toIso8601String(),
       };
 
-  // Build object from JSON when loading from phone memory
   factory RoutineTask.fromJson(Map<String, dynamic> json) => RoutineTask(
         title: json['title'],
         scheduledTime: json['scheduledTime'],
@@ -2336,160 +2612,8 @@ class MusicFolder {
 
 // --- MAIN MUSIC LIBRARY SCREEN ---
 
-class MusicLibraryScreen extends StatefulWidget {
+class MusicLibraryScreen extends StatelessWidget {
   const MusicLibraryScreen({super.key});
-
-  @override
-  State<MusicLibraryScreen> createState() => _MusicLibraryScreenState();
-}
-
-class _MusicLibraryScreenState extends State<MusicLibraryScreen> {
-  
-  // --- PRE-LOADED FOLDERS AND SONGS ---
-  // Replace the 'add songs X' with your actual paths later
-  // Example: path: 'assets/audio/rain.mp3'
-  
-  final List<MusicFolder> folders = [
-  MusicFolder(
-    name: 'Calming Nature',
-
-    tracks: [
-      MusicTrack(
-        title: 'Ocean Waves',
-        path: 'audio/ocean_waves.mp3',
-      ),
-      MusicTrack(
-        title: 'Forest Birds',
-        path: 'audio/forest_birds.mp3',
-      ),
-      MusicTrack(
-        title: 'Gentle Rain',
-        path: 'audio/gentle_rain.mp3',
-      ),
-    ],
-  ),
-
-  MusicFolder(
-    name: 'Classical Therapy',
-
-    tracks: [
-      MusicTrack(
-        title: 'Soft Piano',
-        path: 'audio/soft_piano.mp3',
-      ),
-      MusicTrack(
-        title: 'Relaxing Flute',
-        path: 'audio/relaxing_flute.mp3',
-      ),
-      MusicTrack(
-        title: 'Cello Calm',
-        path: 'audio/cello_calm.mp3',
-      ),
-    ],
-  ),
-
-  // =========================
-  // REGIONAL MUSIC
-  // =========================
-
-  MusicFolder(
-    name: 'Regional Music',
-
-    subFolders: [
-
-      MusicFolder(
-        name: 'Assam',
-
-        tracks: [
-          MusicTrack(
-            title: 'Assam Song 1',
-            path: 'assets/audio/assam/song1.mp3',
-          ),
-          MusicTrack(
-            title: 'Assam Song 2',
-            path: 'assets/audio/assam/song2.mp3',
-          ),
-        ],
-      ),
-
-      MusicFolder(
-        name: 'Meghalaya',
-
-        tracks: [
-          MusicTrack(
-            title: 'Meghalaya Song 1',
-            path: 'assets/audio/meghalaya/song1.mp3',
-          ),
-          MusicTrack(
-            title: 'Meghalaya Song 2',
-            path: 'assets/audio/meghalaya/song2.mp3',
-          ),
-        ],
-      ),
-
-      MusicFolder(
-        name: 'Manipur',
-
-        tracks: [
-          MusicTrack(
-            title: 'Manipur Song 1',
-            path: 'assets/audio/manipur/song1.mp3',
-          ),
-          MusicTrack(
-            title: 'Manipur Song 2',
-            path: 'assets/audio/manipur/song2.mp3',
-          ),
-        ],
-      ),
-
-      MusicFolder(
-        name: 'Mizo',
-
-        tracks: [
-          MusicTrack(
-            title: 'Mizo Song 1',
-            path: 'assets/audio/manipur/song1.mp3',
-          ),
-          MusicTrack(
-            title: 'Mizo Song 2',
-            path: 'assets/audio/manipur/song2.mp3',
-          ),
-        ],
-      ),
-
-      MusicFolder(
-        name: 'Naga',
-
-        tracks: [
-          MusicTrack(
-            title: 'Naga Song 1',
-            path: 'assets/audio/manipur/song1.mp3',
-          ),
-          MusicTrack(
-            title: 'Naga Song 2',
-            path: 'assets/audio/manipur/song2.mp3',
-          ),
-        ],
-      ),
-
-      MusicFolder(
-        name: 'Lepcha',
-
-        tracks: [
-          MusicTrack(
-            title: 'Lepcha Song 1',
-            path: 'assets/audio/manipur/song1.mp3',
-          ),
-          MusicTrack(
-            title: 'Lepcha Song 2',
-            path: 'assets/audio/manipur/song2.mp3',
-          ),
-        ],
-      ),
-    ],
-  ),
-];
-
 
   @override
   Widget build(BuildContext context) {
@@ -2497,44 +2621,160 @@ class _MusicLibraryScreenState extends State<MusicLibraryScreen> {
       appBar: AppBar(
         title: const Text('Music Therapy'),
         centerTitle: true,
+        backgroundColor: Colors.purple,
       ),
-      body: GridView.builder(
+      body: GridView.count(
         padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
+        crossAxisCount: 2,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+        childAspectRatio: 1.1,
+        children: [
+          _buildMusicCard(context, 'Calming', Icons.spa, Colors.teal, () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => BuiltInMusicScreen(
+              title: 'Calming Music',
+              themeColor: Colors.teal,
+              songs: const [
+                {'name': 'Forest Birds', 'path': 'audio/forest_birds.mp3'},
+                {'name': 'Ocean', 'path': 'audio/ocean_waves.mp3'},
+                {'name': 'Rain', 'path': 'audio/gentle_rain.mp3'},
+              ],
+            )));
+          }),
+          _buildMusicCard(context, 'Classical', Icons.music_note, Colors.blue, () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => BuiltInMusicScreen(
+              title: 'Classical Music',
+              themeColor: Colors.blue,
+              songs: const [
+                {'name': 'Cello Calm', 'path': 'audio/cello_calm.mp3'},
+                {'name': 'Flute', 'path': 'audio/relaxing_flute.mp3'},
+                {'name': 'Piano', 'path': 'audio/soft_piano.mp3'},
+              ],
+            )));
+          }),
+          _buildMusicCard(context, 'Favourites', Icons.favorite, Colors.redAccent, () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const FavouritesScreen()));
+          }),
+          _buildMusicCard(context, 'Song Recognition', Icons.quiz, Colors.orange, () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const SongRecognitionScreen()));
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMusicCard(BuildContext context, String title, IconData icon, Color color, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Card(
+        color: Colors.white,
+        elevation: 3,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15), 
+          side: BorderSide(color: color.withOpacity(0.5), width: 2)
         ),
-        itemCount: folders.length,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 50, color: color),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey.shade800),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class BuiltInMusicScreen extends StatefulWidget {
+  final String title;
+  final Color themeColor;
+  final List<Map<String, String>> songs;
+
+  const BuiltInMusicScreen({super.key, required this.title, required this.themeColor, required this.songs});
+
+  @override
+  State<BuiltInMusicScreen> createState() => _BuiltInMusicScreenState();
+}
+
+class _BuiltInMusicScreenState extends State<BuiltInMusicScreen> {
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  int? currentlyPlayingIndex;
+  bool isPlaying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _audioPlayer.onPlayerComplete.listen((event) {
+      setState(() {
+        isPlaying = false;
+        currentlyPlayingIndex = null;
+      });
+    });
+  }
+
+  Future<void> _playPauseSong(int index, String path) async {
+    if (currentlyPlayingIndex == index && isPlaying) {
+      await _audioPlayer.pause();
+      setState(() => isPlaying = false);
+    } else {
+      await _audioPlayer.play(AssetSource(path));
+      setState(() {
+        currentlyPlayingIndex = index;
+        isPlaying = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+        centerTitle: true,
+        backgroundColor: widget.themeColor,
+      ),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(12),
+        itemCount: widget.songs.length,
         itemBuilder: (context, index) {
-          final folder = folders[index];
-          return InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => FolderDetailScreen(folder: folder)),
-              );
-            },
-            borderRadius: BorderRadius.circular(15),
-            child: Card(
-              color: Colors.teal.shade50,
-              elevation: 3,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.library_music, size: 60, color: Colors.teal),
-                    const SizedBox(height: 10),
-                    Text(
-                      folder.name,
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 5),
-                    Text('${folder.tracks.length} songs', style: TextStyle(color: Colors.grey.shade600)),
-                  ],
+          final song = widget.songs[index];
+          final isThisPlaying = currentlyPlayingIndex == index && isPlaying;
+
+          return Card(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: isThisPlaying ? widget.themeColor : Colors.transparent, width: 2)
+            ),
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: isThisPlaying ? widget.themeColor : Colors.grey.shade200,
+                child: Icon(
+                  isThisPlaying ? Icons.music_note : Icons.play_arrow,
+                  color: isThisPlaying ? Colors.white : widget.themeColor,
                 ),
+              ),
+              title: Text(
+                song['name']!,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              trailing: IconButton(
+                icon: Icon(isThisPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill),
+                color: widget.themeColor,
+                iconSize: 36,
+                onPressed: () => _playPauseSong(index, song['path']!),
               ),
             ),
           );
@@ -2543,6 +2783,378 @@ class _MusicLibraryScreenState extends State<MusicLibraryScreen> {
     );
   }
 }
+class FavouritesScreen extends StatefulWidget {
+  const FavouritesScreen({super.key});
+
+  @override
+  State<FavouritesScreen> createState() => _FavouritesScreenState();
+}
+
+class _FavouritesScreenState extends State<FavouritesScreen> {
+  List<Map<String, String>> favouriteSongs = [];
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  int? currentlyPlayingIndex;
+  bool isPlaying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFavouriteSongs();
+    
+    _audioPlayer.onPlayerComplete.listen((event) {
+      setState(() {
+        isPlaying = false;
+        currentlyPlayingIndex = null;
+      });
+    });
+  }
+
+  Future<void> _loadFavouriteSongs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? songsJson = prefs.getString('favourite_songs');
+    if (songsJson != null) {
+      List<dynamic> decoded = jsonDecode(songsJson);
+      setState(() {
+        favouriteSongs = decoded.map((item) => Map<String, String>.from(item)).toList();
+      });
+    }
+  }
+
+  Future<void> _saveFavouriteSongs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('favourite_songs', jsonEncode(favouriteSongs));
+  }
+
+  Future<void> _addMusicFiles() async {
+    // The new syntax directly returns a List of PlatformFile objects
+    List<PlatformFile> files = await FilePicker.pickFiles(
+      type: FileType.audio,
+      allowMultiple: true,
+    ) ?? []; // If the user cancels, it returns an empty list
+
+    if (files.isNotEmpty) {
+      setState(() {
+        for (var file in files) {
+          if (file.path != null) {
+            // Clean up the file name to look nice
+            String cleanName = file.name.replaceAll('.mp3', '').replaceAll('.wav', '');
+            favouriteSongs.add({
+              'name': cleanName,
+              'path': file.path!,
+            });
+          }
+        }
+      });
+      await _saveFavouriteSongs();
+    }
+  }
+
+  Future<void> _deleteSong(int index) async {
+    if (currentlyPlayingIndex == index) {
+      await _audioPlayer.stop();
+      setState(() {
+        isPlaying = false;
+        currentlyPlayingIndex = null;
+      });
+    }
+    
+    setState(() {
+      favouriteSongs.removeAt(index);
+    });
+    await _saveFavouriteSongs();
+  }
+
+  Future<void> _playPauseSong(int index, String path) async {
+    if (currentlyPlayingIndex == index && isPlaying) {
+      await _audioPlayer.pause();
+      setState(() => isPlaying = false);
+    } else {
+      await _audioPlayer.play(DeviceFileSource(path));
+      setState(() {
+        currentlyPlayingIndex = index;
+        isPlaying = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('My Favourites'),
+        centerTitle: true,
+        backgroundColor: Colors.redAccent,
+      ),
+      body: favouriteSongs.isEmpty
+          ? const Center(
+              child: Text(
+                'No favourite songs added yet.\nTap + to add music from your device.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: favouriteSongs.length,
+              itemBuilder: (context, index) {
+                final song = favouriteSongs[index];
+                final isThisPlaying = currentlyPlayingIndex == index && isPlaying;
+
+                return Card(
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: isThisPlaying ? Colors.redAccent : Colors.transparent, width: 2)
+                  ),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: isThisPlaying ? Colors.redAccent : Colors.grey.shade200,
+                      child: Icon(
+                        isThisPlaying ? Icons.music_note : Icons.play_arrow,
+                        color: isThisPlaying ? Colors.white : Colors.redAccent,
+                      ),
+                    ),
+                    title: Text(
+                      song['name']!,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: Icon(isThisPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill),
+                          color: Colors.redAccent,
+                          iconSize: 36,
+                          onPressed: () => _playPauseSong(index, song['path']!),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.grey),
+                          onPressed: () => _deleteSong(index),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: Colors.redAccent,
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text('Add Music', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        onPressed: _addMusicFiles,
+      ),
+    );
+  }
+}
+
+// class _MusicLibraryScreenState extends State<MusicLibraryScreen> {
+  
+//   // --- PRE-LOADED FOLDERS AND SONGS ---
+//   // Replace the 'add songs X' with your actual paths later
+//   // Example: path: 'assets/audio/rain.mp3'
+  
+//   final List<MusicFolder> folders = [
+//   MusicFolder(
+//     name: 'Calming Nature',
+
+//     tracks: [
+//       MusicTrack(
+//         title: 'Ocean Waves',
+//         path: 'audio/ocean_waves.mp3',
+//       ),
+//       MusicTrack(
+//         title: 'Forest Birds',
+//         path: 'audio/forest_birds.mp3',
+//       ),
+//       MusicTrack(
+//         title: 'Gentle Rain',
+//         path: 'audio/gentle_rain.mp3',
+//       ),
+//     ],
+//   ),
+
+//   MusicFolder(
+//     name: 'Classical Therapy',
+
+//     tracks: [
+//       MusicTrack(
+//         title: 'Soft Piano',
+//         path: 'audio/soft_piano.mp3',
+//       ),
+//       MusicTrack(
+//         title: 'Relaxing Flute',
+//         path: 'audio/relaxing_flute.mp3',
+//       ),
+//       MusicTrack(
+//         title: 'Cello Calm',
+//         path: 'audio/cello_calm.mp3',
+//       ),
+//     ],
+//   ),
+
+//   // =========================
+//   // REGIONAL MUSIC
+//   // =========================
+
+//   MusicFolder(
+//     name: 'Regional Music',
+
+//     subFolders: [
+
+//       MusicFolder(
+//         name: 'Assam',
+
+//         tracks: [
+//           MusicTrack(
+//             title: 'Assam Song 1',
+//             path: 'assets/audio/assam/song1.mp3',
+//           ),
+//           MusicTrack(
+//             title: 'Assam Song 2',
+//             path: 'assets/audio/assam/song2.mp3',
+//           ),
+//         ],
+//       ),
+
+//       MusicFolder(
+//         name: 'Meghalaya',
+
+//         tracks: [
+//           MusicTrack(
+//             title: 'Meghalaya Song 1',
+//             path: 'assets/audio/meghalaya/song1.mp3',
+//           ),
+//           MusicTrack(
+//             title: 'Meghalaya Song 2',
+//             path: 'assets/audio/meghalaya/song2.mp3',
+//           ),
+//         ],
+//       ),
+
+//       MusicFolder(
+//         name: 'Manipur',
+
+//         tracks: [
+//           MusicTrack(
+//             title: 'Manipur Song 1',
+//             path: 'assets/audio/manipur/song1.mp3',
+//           ),
+//           MusicTrack(
+//             title: 'Manipur Song 2',
+//             path: 'assets/audio/manipur/song2.mp3',
+//           ),
+//         ],
+//       ),
+
+//       MusicFolder(
+//         name: 'Mizo',
+
+//         tracks: [
+//           MusicTrack(
+//             title: 'Mizo Song 1',
+//             path: 'assets/audio/manipur/song1.mp3',
+//           ),
+//           MusicTrack(
+//             title: 'Mizo Song 2',
+//             path: 'assets/audio/manipur/song2.mp3',
+//           ),
+//         ],
+//       ),
+
+//       MusicFolder(
+//         name: 'Naga',
+
+//         tracks: [
+//           MusicTrack(
+//             title: 'Naga Song 1',
+//             path: 'assets/audio/manipur/song1.mp3',
+//           ),
+//           MusicTrack(
+//             title: 'Naga Song 2',
+//             path: 'assets/audio/manipur/song2.mp3',
+//           ),
+//         ],
+//       ),
+
+//       MusicFolder(
+//         name: 'Lepcha',
+
+//         tracks: [
+//           MusicTrack(
+//             title: 'Lepcha Song 1',
+//             path: 'assets/audio/manipur/song1.mp3',
+//           ),
+//           MusicTrack(
+//             title: 'Lepcha Song 2',
+//             path: 'assets/audio/manipur/song2.mp3',
+//           ),
+//         ],
+//       ),
+//     ],
+//   ),
+// ];
+
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Scaffold(
+//       appBar: AppBar(
+//         title: const Text('Music Therapy'),
+//         centerTitle: true,
+//       ),
+//       body: GridView.builder(
+//         padding: const EdgeInsets.all(16),
+//         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+//           crossAxisCount: 2,
+//           crossAxisSpacing: 16,
+//           mainAxisSpacing: 16,
+//         ),
+//         itemCount: folders.length,
+//         itemBuilder: (context, index) {
+//           final folder = folders[index];
+//           return InkWell(
+//             onTap: () {
+//               Navigator.push(
+//                 context,
+//                 MaterialPageRoute(builder: (_) => FolderDetailScreen(folder: folder)),
+//               );
+//             },
+//             borderRadius: BorderRadius.circular(15),
+//             child: Card(
+//               color: Colors.teal.shade50,
+//               elevation: 3,
+//               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+//               child: Center(
+//                 child: Column(
+//                   mainAxisAlignment: MainAxisAlignment.center,
+//                   children: [
+//                     const Icon(Icons.library_music, size: 60, color: Colors.teal),
+//                     const SizedBox(height: 10),
+//                     Text(
+//                       folder.name,
+//                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+//                       textAlign: TextAlign.center,
+//                     ),
+//                     const SizedBox(height: 5),
+//                     Text('${folder.tracks.length} songs', style: TextStyle(color: Colors.grey.shade600)),
+//                   ],
+//                 ),
+//               ),
+//             ),
+//           );
+//         },
+//       ),
+//     );
+//   }
+// }
 
 // --- FOLDER DETAIL & AUDIO PLAYER SCREEN ---
 
@@ -2689,6 +3301,8 @@ class RemindersSelectionScreen extends StatelessWidget {
 
 // --- MEDICINE SCREEN & LOGIC ---
 
+// --- MEDICINE SCREEN & LOGIC ---
+
 class MedicineItem {
   String id;
   String name;
@@ -2735,13 +3349,32 @@ class _MedicineScreenState extends State<MedicineScreen> {
       List<dynamic> decoded = jsonDecode(medsJson);
       medicines = decoded.map((item) => MedicineItem.fromJson(item)).toList();
       
-      // Reset checkboxes if the day has changed
+      bool hasUpdates = false;
+
       for (var med in medicines) {
-        if (med.lastCheckedDate != todayStr) {
+        // If the date has rolled over to a new day
+        if (med.lastCheckedDate.isNotEmpty && med.lastCheckedDate != todayStr) {
+          // If the medicine was left unchecked, send the missed alert to the caregiver
+          if (!med.isChecked) {
+            await CaregiverAlertService.sendMissedAlert(
+              'Medicine',
+              med.name,
+              med.time,
+            );
+          }
+          
+          // Reset checkbox for today
           med.isChecked = false;
+          hasUpdates = true;
         }
       }
+
+      // Persist the reset state so alerts are not triggered repeatedly on every reload
+      if (hasUpdates) {
+        await _saveMedicines();
+      }
     }
+    
     setState(() => isLoading = false);
   }
 
@@ -2786,7 +3419,6 @@ class _MedicineScreenState extends State<MedicineScreen> {
                           if (time != null) {
                             setDialogState(() {
                               selectedTime = time;
-                              // Formatting time to AM/PM string
                               timeString = time.format(context);
                             });
                           }
@@ -2805,10 +3437,29 @@ class _MedicineScreenState extends State<MedicineScreen> {
                     if (nameController.text.trim().isNotEmpty && timeString.isNotEmpty) {
                       setState(() {
                         if (existingMed == null) {
-                          medicines.add(MedicineItem(id: DateTime.now().millisecondsSinceEpoch.toString(), name: nameController.text.trim(), time: timeString));
+                          String newId = DateTime.now().millisecondsSinceEpoch.toString();
+                          medicines.add(MedicineItem(id: newId, name: nameController.text.trim(), time: timeString));
+                          
+                          // --- NEW: SCHEDULE MEDICINE NOTIFICATION ---
+                          NotificationService.instance.scheduleDailyTimeNotification(
+                            id: newId.hashCode,
+                            title: 'Medicine Reminder 💊',
+                            body: 'Time to take: ${nameController.text.trim()}',
+                            hour: selectedTime.hour,
+                            minute: selectedTime.minute,
+                          );
                         } else {
                           medicines[index!].name = nameController.text.trim();
                           medicines[index].time = timeString;
+
+                          // --- NEW: UPDATE MEDICINE NOTIFICATION ---
+                          NotificationService.instance.scheduleDailyTimeNotification(
+                            id: existingMed.id.hashCode,
+                            title: 'Medicine Reminder 💊',
+                            body: 'Time to take: ${nameController.text.trim()}',
+                            hour: selectedTime.hour,
+                            minute: selectedTime.minute,
+                          );
                         }
                       });
                       _saveMedicines();
@@ -2848,7 +3499,6 @@ class _MedicineScreenState extends State<MedicineScreen> {
           ? const Center(child: Text('No medicines added yet.', style: TextStyle(color: Colors.grey, fontSize: 18)))
           : Column(
               children: [
-                // Table Header
                 Container(
                   color: Colors.teal.shade100,
                   padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
@@ -2856,12 +3506,11 @@ class _MedicineScreenState extends State<MedicineScreen> {
                     children: [
                       Expanded(flex: 3, child: Text('Medicine Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
                       Expanded(flex: 2, child: Text('Time', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
-                      SizedBox(width: 48), // Space for edit icon
-                      SizedBox(width: 48), // Space for checkbox
+                      SizedBox(width: 48),
+                      SizedBox(width: 48),
                     ],
                   ),
                 ),
-                // Table Rows
                 Expanded(
                   child: ListView.builder(
                     itemCount: medicines.length,
@@ -3007,12 +3656,37 @@ class _DoctorAppointmentScreenState extends State<DoctorAppointmentScreen> {
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
                   onPressed: () {
                     if (nameController.text.trim().isNotEmpty && combinedDateTime.isNotEmpty) {
+                      
+                      // Construct the exact DateTime for the notification scheduling
+                      DateTime appointmentDateTime = DateTime(
+                        selectedDate.year,
+                        selectedDate.month,
+                        selectedDate.day,
+                        selectedTime.hour,
+                        selectedTime.minute,
+                      );
+
                       setState(() {
                         if (existingAppt == null) {
-                          appointments.add(DoctorAppointment(id: DateTime.now().millisecondsSinceEpoch.toString(), name: nameController.text.trim(), dateTimeStr: combinedDateTime));
+                          String newId = DateTime.now().millisecondsSinceEpoch.toString();
+                          appointments.add(DoctorAppointment(id: newId, name: nameController.text.trim(), dateTimeStr: combinedDateTime));
+                          
+                          // --- NEW: SCHEDULE APPOINTMENT NOTIFICATION ---
+                          NotificationService.instance.scheduleAppointmentNotification(
+                            id: newId.hashCode,
+                            doctorName: nameController.text.trim(),
+                            appointmentDateTime: appointmentDateTime,
+                          );
                         } else {
                           appointments[index!].name = nameController.text.trim();
                           appointments[index].dateTimeStr = combinedDateTime;
+
+                          // --- NEW: UPDATE APPOINTMENT NOTIFICATION ---
+                          NotificationService.instance.scheduleAppointmentNotification(
+                            id: existingAppt.id.hashCode,
+                            doctorName: nameController.text.trim(),
+                            appointmentDateTime: appointmentDateTime,
+                          );
                         }
                       });
                       _saveAppointments();
@@ -3030,6 +3704,9 @@ class _DoctorAppointmentScreenState extends State<DoctorAppointmentScreen> {
   }
 
   void _completeAppointment(int index) {
+    // --- NEW: CANCEL NOTIFICATION ON COMPLETION ---
+    NotificationService.instance.cancelNotification(appointments[index].id.hashCode);
+
     setState(() {
       appointments.removeAt(index);
     });
@@ -3049,7 +3726,6 @@ class _DoctorAppointmentScreenState extends State<DoctorAppointmentScreen> {
           ? const Center(child: Text('No upcoming appointments.', style: TextStyle(color: Colors.grey, fontSize: 18)))
           : Column(
               children: [
-                // Table Header
                 Container(
                   color: Colors.blue.shade100,
                   padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
@@ -3057,12 +3733,11 @@ class _DoctorAppointmentScreenState extends State<DoctorAppointmentScreen> {
                     children: [
                       Expanded(flex: 3, child: Text('Doctor/Clinic', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
                       Expanded(flex: 3, child: Text('Date & Time', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
-                      SizedBox(width: 40), // Edit icon
-                      SizedBox(width: 48), // Checkbox
+                      SizedBox(width: 40),
+                      SizedBox(width: 48),
                     ],
                   ),
                 ),
-                // Table Rows
                 Expanded(
                   child: ListView.builder(
                     itemCount: appointments.length,
@@ -3086,7 +3761,7 @@ class _DoctorAppointmentScreenState extends State<DoctorAppointmentScreen> {
                               Checkbox(
                                 value: false,
                                 activeColor: Colors.green,
-                                shape: const CircleBorder(), // Distinguishes it from medicine checkbox
+                                shape: const CircleBorder(), 
                                 onChanged: (bool? value) {
                                   if (value == true) {
                                     _completeAppointment(index);
@@ -3613,7 +4288,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setBool('isDarkMode', value);
     setState(() => isDarkMode = value);
     
-    // Instantly update the whole app
     themeNotifier.value = value ? ThemeMode.dark : ThemeMode.light;
   }
 
@@ -3622,7 +4296,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setBool('isLargeText', value);
     setState(() => isLargeText = value);
     
-    // Instantly scale text by 20%
     textScaleNotifier.value = value ? 1.2 : 1.0;
   }
 
@@ -3643,7 +4316,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return AlertDialog(
           title: const Text('Reset All Progress?'),
           content: const Text(
-            'This will permanently delete the current streak, scores, and daily routine data. Are you sure?',
+            'This will permanently delete your current streak, highest scores, and daily routine data. Are you sure?',
           ),
           actions: [
             TextButton(
@@ -3653,13 +4326,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () async {
-                Navigator.pop(dialogContext); // Close dialog
+                Navigator.pop(dialogContext); 
                 
-                // Clear saved game scores and routines
                 final prefs = await SharedPreferences.getInstance();
+                final String userId = prefs.getString('sqlite_user_id') ?? "";
+
+                // 1. Reset SQLite Database Scores
+                if (userId.isNotEmpty) {
+                  await DatabaseHelper.instance.updatePatientScores(
+                    userId: userId,
+                    cumulativeScore: 0,
+                    dailyScore: 0,
+                    currentStreak: 0,
+                    lastActivityDate: '',
+                  );
+                }
+
+                // 2. Clear SharedPreferences Progress Data
                 await prefs.remove('routine_tasks');
                 await prefs.remove('routine_date');
-                // Note: Don't use prefs.clear() as it wipes language and theme settings too!
+                await prefs.remove('active_dates');
+                await prefs.remove('highest_historical_streak');
 
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -3688,7 +4375,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // --- APPEARANCE ---
           const Padding(
             padding: EdgeInsets.only(left: 8.0, bottom: 8.0, top: 8.0),
             child: Text('Appearance', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal)),
@@ -3720,7 +4406,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 20),
 
-          // --- NOTIFICATIONS ---
           const Padding(
             padding: EdgeInsets.only(left: 8.0, bottom: 8.0),
             child: Text('Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal)),
@@ -3739,7 +4424,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 40),
 
-          // --- DANGER ZONE ---
           const Padding(
             padding: EdgeInsets.only(left: 8.0, bottom: 8.0),
             child: Text('Data Management', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.redAccent)),
@@ -4241,11 +4925,26 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
   String institution = "";
   String caregiverId = "";
   final TextEditingController _searchController = TextEditingController();
+  
+  // --- NEW: Timer for polling alerts ---
+  Timer? _alertTimer;
 
   @override
   void initState() {
     super.initState();
     _loadCaregiverData();
+    
+    // --- NEW: Check for patient alerts every 10 seconds ---
+    _alertTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      CaregiverAlertService.checkForNewAlerts();
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _alertTimer?.cancel(); // --- NEW: Cancel timer when screen closes ---
+    super.dispose();
   }
 
   Future<void> _loadCaregiverData() async {
@@ -4353,11 +5052,6 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
     );
   }
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -4435,8 +5129,12 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
                 _buildCaregiverCard('My Patients', Icons.group, Colors.indigo, onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const MyPatientsScreen()));
                 }),
-                _buildCaregiverCard('Analytics', Icons.bar_chart, Colors.purple),
-                _buildCaregiverCard('Settings', Icons.settings, Colors.blueGrey),
+                _buildCaregiverCard('Analytics', Icons.bar_chart, Colors.purple, onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CaregiverAnalyticsScreen()));
+                }),
+                _buildCaregiverCard('Settings', Icons.settings, Colors.blueGrey, onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                }),
               ],
             ),
           ],
@@ -4453,7 +5151,7 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
       child: Card(
         color: Colors.white,
         elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: color.withOpacity(0.3), width: 2)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: color.withValues(alpha: 0.3), width: 2)),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -4566,5 +5264,633 @@ class _MyPatientsScreenState extends State<MyPatientsScreen> {
               ),
             ),
     );
+  }
+}
+
+
+//////////////////////////////////////////////////
+//////////////////////////////////////////////////
+///                                            ///
+///               VOICE ASST                   ///
+///                                            ///
+//////////////////////////////////////////////////
+//////////////////////////////////////////////////
+
+class VoiceAssistantService {
+  static final VoiceAssistantService instance = VoiceAssistantService._internal();
+  VoiceAssistantService._internal();
+
+  final FlutterTts _flutterTts = FlutterTts();
+  final stt.SpeechToText _speech = stt.SpeechToText();
+
+  bool _isSpeechInitialized = false;
+
+  Future<void> init() async {
+    // 0.4 rate is clear, calm, and slow for elderly users
+    await _flutterTts.setSpeechRate(0.5);
+    await _flutterTts.setVolume(1.0);
+    await _flutterTts.setPitch(1.0);
+    _isSpeechInitialized = await _speech.initialize();
+  }
+
+  Future<void> speak(String text) async {
+    final prefs = await SharedPreferences.getInstance();
+    final langCode = prefs.getString('app_language') ?? 'en';
+    
+    // Map standard codes to TTS locales
+    String ttsLang = 'en-IN';
+    if (langCode == 'bn') ttsLang = 'bn-IN';
+    if (langCode == 'hi') ttsLang = 'hi-IN';
+    
+    await _flutterTts.setLanguage(ttsLang);
+    await _flutterTts.speak(text);
+  }
+
+  Future<void> stopSpeaking() async {
+    await _flutterTts.stop();
+  }
+
+  Future<void> startListening({
+    required Function(String text) onResult,
+    required Function(bool isListening) onListeningStatusChanged,
+  }) async {
+    if (!_isSpeechInitialized) {
+      _isSpeechInitialized = await _speech.initialize();
+    }
+
+    if (_isSpeechInitialized) {
+      final prefs = await SharedPreferences.getInstance();
+      final langCode = prefs.getString('app_language') ?? 'en';
+      
+      String localeId = 'en_IN';
+      if (langCode == 'bn') localeId = 'bn_IN';
+      if (langCode == 'hi') localeId = 'hi_IN';
+
+      onListeningStatusChanged(true);
+
+      await _speech.listen(
+        localeId: localeId,
+        onResult: (result) {
+          onResult(result.recognizedWords);
+          if (result.finalResult) {
+            onListeningStatusChanged(false);
+          }
+        },
+      );
+    } else {
+      onListeningStatusChanged(false);
+    }
+  }
+
+  Future<void> stopListening() async {
+    await _speech.stop();
+  }
+
+  // --- HYBRID INTENT ENGINE ---
+  String parseIntent(String spokenText) {
+    final text = spokenText.toLowerCase();
+
+    if (text.contains('memory') || text.contains('মেমরি') || text.contains('स्मृति')) {
+      return 'start_memory_game';
+    }
+    if (text.contains('pattern') || text.contains('প্যাটার্ন') || text.contains('रंग')) {
+      return 'start_pattern_game';
+    }
+    if (text.contains('music') || text.contains('গান') || text.contains('संगीत')) {
+      return 'open_music';
+    }
+    if (text.contains('routine') || text.contains('কাজ') || text.contains('दिनचर्या')) {
+      return 'open_routine';
+    }
+    if (text.contains('family') || text.contains('পরিবার') || text.contains('परिवार')) {
+      return 'open_family';
+    }
+    return 'unknown';
+  }
+}
+
+////////////////////////////////////////////////
+////////////////////////////////////////////////
+///          CAREGIVER ANALYTICS             ///
+////////////////////////////////////////////////
+////////////////////////////////////////////////
+
+class CaregiverAnalyticsScreen extends StatefulWidget {
+  const CaregiverAnalyticsScreen({super.key});
+
+  @override
+  State<CaregiverAnalyticsScreen> createState() => _CaregiverAnalyticsScreenState();
+}
+
+class _CaregiverAnalyticsScreenState extends State<CaregiverAnalyticsScreen> {
+  List<Map<String, dynamic>> linkedPatients = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPatients();
+  }
+
+  Future<void> _loadPatients() async {
+    final prefs = await SharedPreferences.getInstance();
+    final caregiverId = prefs.getString('sqlite_user_id') ?? "";
+
+    if (caregiverId.isNotEmpty) {
+      final patients = await DatabaseHelper.instance.getPatientsForCaregiver(caregiverId);
+      setState(() {
+        linkedPatients = patients;
+      });
+    }
+    setState(() => isLoading = false);
+  }
+
+  Color _getTrendColor(int diff) {
+    if (diff < -100) return Colors.red;
+    if (diff >= -100 && diff < -50) return Colors.orange;
+    if (diff >= -50 && diff < 0) return Colors.yellow;
+    if (diff >= 0 && diff <= 10) return Colors.white; 
+    if (diff > 10 && diff <= 50) return Colors.lightGreen;
+    return Colors.green.shade800; 
+  }
+
+  int _getLatestPerformanceDiff(Map<String, dynamic> patient) {
+    int dailyScore = patient['daily_score'] as int? ?? 0;
+    String lastActivityDate = patient['last_activity_date']?.toString() ?? "";
+
+    DateTime now = DateTime.now();
+    String todayStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+    // If the last activity wasn't today, their true score for today is 0.
+    if (lastActivityDate != todayStr) return 0;
+    
+    // Since past historical daily records aren't stored, difference is today vs 0.
+    return dailyScore;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Patient Analytics'),
+        centerTitle: true,
+        backgroundColor: Colors.purple,
+      ),
+      backgroundColor: Colors.grey.shade100,
+      body: linkedPatients.isEmpty
+          ? const Center(
+              child: Text(
+                'No patients found.\nAdd patients from the dashboard to analyze them.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+            )
+          : GridView.builder(
+              padding: const EdgeInsets.all(16),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2, 
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                childAspectRatio: 0.85,
+              ),
+              itemCount: linkedPatients.length,
+              itemBuilder: (context, index) {
+                final patient = linkedPatients[index];
+                
+                Uint8List? photoBytes;
+                if (patient['photo'] != null && patient['photo'].toString().isNotEmpty) {
+                  photoBytes = base64Decode(patient['photo']);
+                }
+
+                int latestDiff = _getLatestPerformanceDiff(patient);
+                Color trendColor = _getTrendColor(latestDiff);
+
+                return InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PatientAnalyticsDetailScreen(
+                          patientData: patient,
+                          trendColor: trendColor,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Card(
+                    elevation: 4,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      side: BorderSide(color: trendColor == Colors.white ? Colors.grey.shade300 : trendColor, width: 4),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircleAvatar(
+                          radius: 35,
+                          backgroundColor: Colors.purple.shade50,
+                          backgroundImage: photoBytes != null ? MemoryImage(photoBytes) : null,
+                          child: photoBytes == null ? const Icon(Icons.person, size: 40, color: Colors.purple) : null,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          patient['name'],
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text('Age: ${patient['age'] ?? '-'}', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                        Text('ID: ${patient['registration_number']}', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
+// --- 7-DAY ANALYTICS TABLE SCREEN ---
+
+class PatientAnalyticsDetailScreen extends StatefulWidget {
+  final Map<String, dynamic> patientData;
+  final Color trendColor;
+
+  const PatientAnalyticsDetailScreen({super.key, required this.patientData, required this.trendColor});
+
+  @override
+  State<PatientAnalyticsDetailScreen> createState() => _PatientAnalyticsDetailScreenState();
+}
+
+class _PatientAnalyticsDetailScreenState extends State<PatientAnalyticsDetailScreen> {
+  List<Map<String, dynamic>> weeklyData = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _generateWeeklyHistory();
+  }
+
+  void _generateWeeklyHistory() {
+    int currentCumScore = widget.patientData['cumulative_score'] as int? ?? 0;
+    int currentDaily = widget.patientData['daily_score'] as int? ?? 0;
+    String lastActivityDate = widget.patientData['last_activity_date']?.toString() ?? "";
+    
+    DateTime now = DateTime.now();
+    String todayStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+    int actualTodayDaily = (lastActivityDate == todayStr) ? currentDaily : 0;
+    
+    // Deduct today's score to find out what the cumulative score was yesterday
+    int pastCumScore = currentCumScore - actualTodayDaily;
+    if (pastCumScore < 0) pastCumScore = 0;
+
+    for (int i = 0; i < 7; i++) {
+      DateTime day = now.subtract(Duration(days: i));
+      String dateStr = "${day.day.toString().padLeft(2, '0')}/${day.month.toString().padLeft(2, '0')}";
+
+      int dayScore = 0;
+      int diff = 0;
+      int runningCumScore = pastCumScore; 
+
+      if (i == 0) {
+        dayScore = actualTodayDaily;
+        diff = actualTodayDaily; // difference from 0 yesterday
+        runningCumScore = currentCumScore;
+      } else {
+        // If data is missing for previous days, output 0 as requested
+        dayScore = 0;
+        diff = 0;
+        runningCumScore = pastCumScore;
+      }
+
+      weeklyData.add({
+        'date': dateStr,
+        'daily_score': dayScore,
+        'cum_score': runningCumScore,
+        'difference': diff,
+      });
+    }
+  }
+
+  Color _getTrendColor(int diff) {
+    if (diff < -100) return Colors.red;
+    if (diff >= -100 && diff < -50) return Colors.orange;
+    if (diff >= -50 && diff < 0) return Colors.yellow;
+    if (diff >= 0 && diff <= 10) return Colors.white; 
+    if (diff > 10 && diff <= 50) return Colors.lightGreen;
+    return Colors.green.shade800; 
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Uint8List? photoBytes;
+    if (widget.patientData['photo'] != null && widget.patientData['photo'].toString().isNotEmpty) {
+      photoBytes = base64Decode(widget.patientData['photo']);
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Performance Analyzer'),
+        centerTitle: true,
+        backgroundColor: Colors.purple,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 30,
+                      backgroundColor: Colors.purple.shade50,
+                      backgroundImage: photoBytes != null ? MemoryImage(photoBytes) : null,
+                      child: photoBytes == null ? const Icon(Icons.person, size: 30, color: Colors.purple) : null,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(widget.patientData['name'], style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                          Text('ID: ${widget.patientData['registration_number']}', style: const TextStyle(color: Colors.grey)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            
+            const Text('7-Day Activity Trend', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.purple)),
+            const SizedBox(height: 12),
+
+            Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(15),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    headingRowColor: WidgetStateProperty.all(Colors.purple.shade50),
+                    columnSpacing: 20,
+                    columns: const [
+                      DataColumn(label: Text('Date', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Daily', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Total', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Trend', style: TextStyle(fontWeight: FontWeight.bold))),
+                    ],
+                    rows: weeklyData.map((data) {
+                      int diff = data['difference'];
+                      Color rowTrendColor = _getTrendColor(diff);
+                      String diffString = diff > 0 ? '+$diff' : '$diff';
+                      
+                      BoxBorder? border = rowTrendColor == Colors.white 
+                          ? Border.all(color: Colors.grey.shade400) 
+                          : null;
+
+                      Color textColor = (rowTrendColor == Colors.white || rowTrendColor == Colors.yellow || rowTrendColor == Colors.lightGreen)
+                          ? Colors.black87
+                          : Colors.white;
+
+                      return DataRow(
+                        cells: [
+                          DataCell(Text(data['date'].toString(), style: const TextStyle(fontWeight: FontWeight.bold))),
+                          DataCell(Text(data['daily_score'].toString())),
+                          DataCell(Text(data['cum_score'].toString())),
+                          DataCell(
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: rowTrendColor,
+                                borderRadius: BorderRadius.circular(12),
+                                border: border,
+                              ),
+                              child: Text(
+                                diffString,
+                                style: TextStyle(fontWeight: FontWeight.bold, color: textColor),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+////////////////////////////////////////////
+////////////////////////////////////////////
+///           NOTIFICAITION              ///
+////////////////////////////////////////////
+////////////////////////////////////////////
+
+class NotificationService {
+  static final NotificationService instance = NotificationService._internal();
+  NotificationService._internal();
+
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+
+  Future<void> init() async {
+    tz.initializeTimeZones();
+
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const InitializationSettings initSettings =
+        InitializationSettings(android: androidSettings);
+
+    await _notificationsPlugin.initialize(initSettings);
+
+    await _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+  }
+
+  // --- Hourly Hydration (Custom Sound) ---
+  Future<void> scheduleHourlyHydrationReminder() async {
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'hydration_channel',
+      'Hydration Reminders',
+      channelDescription: 'Hourly reminders to drink water',
+      importance: Importance.high,
+      priority: Priority.high,
+      sound: RawResourceAndroidNotificationSound('gentle_alert'), // Custom Sound
+    );
+
+    const NotificationDetails platformDetails =
+        NotificationDetails(android: androidDetails);
+
+    await _notificationsPlugin.periodicallyShow(
+      999,
+      'Time to Drink Water 💧',
+      'Please drink a glass of water to stay hydrated and healthy.',
+      RepeatInterval.hourly,
+      platformDetails,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    );
+  }
+
+  // --- Daily Routine & Medicine (Custom Sound) ---
+  Future<void> scheduleDailyTimeNotification({
+    required int id,
+    required String title,
+    required String body,
+    required int hour,
+    required int minute,
+  }) async {
+    final tz.TZDateTime now = tz.TZDateTime.now(tz.local);
+    tz.TZDateTime scheduledDate = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+
+    if (scheduledDate.isBefore(now)) {
+      scheduledDate = scheduledDate.add(const Duration(days: 1));
+    }
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'daily_routine_channel',
+      'Routine & Medicine Reminders',
+      channelDescription: 'Scheduled reminders for daily activities and meds',
+      importance: Importance.max,
+      priority: Priority.high,
+      sound: RawResourceAndroidNotificationSound('gentle_alert'), // Custom Sound
+    );
+
+    const NotificationDetails platformDetails =
+        NotificationDetails(android: androidDetails);
+
+    await _notificationsPlugin.zonedSchedule(
+      id,
+      title,
+      body,
+      scheduledDate,
+      platformDetails,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      matchDateTimeComponents: DateTimeComponents.time,
+    );
+  }
+
+  // --- Doctor Appointment (Main + 1 Hour Early Warning) ---
+  Future<void> scheduleAppointmentNotification({
+    required int id,
+    required String doctorName,
+    required DateTime appointmentDateTime,
+  }) async {
+    final tz.TZDateTime mainScheduledDate = tz.TZDateTime.from(appointmentDateTime, tz.local);
+    final tz.TZDateTime earlyWarningDate = mainScheduledDate.subtract(const Duration(hours: 1));
+    final tz.TZDateTime now = tz.TZDateTime.now(tz.local);
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'doctor_channel',
+      'Doctor Appointments',
+      channelDescription: 'Reminders for upcoming doctor visits',
+      importance: Importance.max,
+      priority: Priority.high,
+      sound: RawResourceAndroidNotificationSound('gentle_alert'), // Custom Sound
+    );
+
+    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+
+    // 1. Main Appointment Alert (At exact time)
+    if (mainScheduledDate.isAfter(now)) {
+      await _notificationsPlugin.zonedSchedule(
+        id,
+        'Doctor Appointment Now 🏥',
+        'It is time for your appointment with $doctorName.',
+        mainScheduledDate,
+        platformDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    }
+
+    // 2. Early Warning Alert (1 Hour Prior)
+    if (earlyWarningDate.isAfter(now)) {
+      await _notificationsPlugin.zonedSchedule(
+        id + 10000, // Offset ID so it doesn't overwrite the main alert
+        'Upcoming Appointment ⏰',
+        'You have an appointment with $doctorName in 1 hour.',
+        earlyWarningDate,
+        platformDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    }
+  }
+
+  Future<void> cancelNotification(int id) async {
+    await _notificationsPlugin.cancel(id);
+    await _notificationsPlugin.cancel(id + 10000); // Also cancel the early warning if it exists
+  }
+}
+
+
+////////////////////////////////////////////
+////////////////////////////////////////////
+///       CAREGIVER ALERT SYSTEM         ///
+////////////////////////////////////////////
+////////////////////////////////////////////
+
+class CaregiverAlertService {
+  // --- 1. PATIENT SIDE: Log the missed activity ---
+  static Future<void> sendMissedAlert(String type, String activityName, String scheduledTime) async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Get the patient's registration ID
+    String regId = prefs.getString('user_registration_number') ?? "Unknown ID";
+    String patientName = prefs.getString('user_name') ?? "Patient";
+
+    // Create the alert message
+    String alertMessage = "Patient [$regId] $patientName missed their $type: '$activityName' scheduled at $scheduledTime.";
+
+    // Use getStringList and setStringList for string arrays
+    List<String> pendingAlerts = prefs.getStringList('pending_caregiver_alerts') ?? [];
+    pendingAlerts.add(alertMessage);
+    await prefs.setStringList('pending_caregiver_alerts', pendingAlerts);
+  }
+
+  // --- 2. CAREGIVER SIDE: Check for alerts and notify ---
+  static Future<void> checkForNewAlerts() async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> pendingAlerts = prefs.getStringList('pending_caregiver_alerts') ?? [];
+
+    if (pendingAlerts.isNotEmpty) {
+      for (int i = 0; i < pendingAlerts.length; i++) {
+        // Trigger the local notification on the Caregiver's dashboard
+        await NotificationService.instance.scheduleDailyTimeNotification(
+          id: DateTime.now().millisecondsSinceEpoch.remainder(100000) + i, 
+          title: 'Missed Activity Alert ⚠️',
+          body: pendingAlerts[i],
+          hour: DateTime.now().hour,
+          minute: DateTime.now().minute,
+        );
+      }
+      
+      // Clear the alerts using setStringList with an empty list
+      await prefs.setStringList('pending_caregiver_alerts', []);
+    }
   }
 }

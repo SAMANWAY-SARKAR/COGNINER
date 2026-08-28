@@ -21,6 +21,7 @@ class PatientCreate(BaseModel):
 
 class PatientOut(PatientCreate):
     created_at: datetime
+
     class Config:
         from_attributes = True
 
@@ -34,6 +35,7 @@ class CaregiverCreate(BaseModel):
 
 class CaregiverOut(CaregiverCreate):
     created_at: datetime
+
     class Config:
         from_attributes = True
 
@@ -42,7 +44,7 @@ class CaregiverPatientLink(BaseModel):
     patient_id: UUID
 
 class LoginRequest(BaseModel):
-    identifier: str 
+    identifier: str
     password: str
 
 class LoginResponse(BaseModel):
@@ -59,6 +61,7 @@ class GameSessionCreate(BaseModel):
 
 class GameSessionOut(GameSessionCreate):
     timestamp: datetime
+
     class Config:
         from_attributes = True
 
@@ -70,5 +73,6 @@ class MusicSessionCreate(BaseModel):
 
 class MusicSessionOut(MusicSessionCreate):
     timestamp: datetime
+
     class Config:
         from_attributes = True

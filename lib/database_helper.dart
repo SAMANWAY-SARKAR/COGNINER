@@ -7,11 +7,9 @@ import 'package:uuid/uuid.dart';
 class DatabaseHelper {
   DatabaseHelper._privateConstructor();
   static final DatabaseHelper instance = DatabaseHelper._privateConstructor();
-
   static sqlite.Database? _database;
   final _uuid = const Uuid();
 
-  // Web in-memory storage fallback
   final List<Map<String, dynamic>> _webPatients = [];
   final List<Map<String, dynamic>> _webCaregivers = [];
   final List<Map<String, dynamic>> _webCaregiverPatients = [];
@@ -19,7 +17,7 @@ class DatabaseHelper {
   final List<Map<String, dynamic>> _webMusicSessions = [];
 
   Future<sqlite.Database?> get database async {
-    if (kIsWeb) return null; 
+    if (kIsWeb) return null;
     if (_database != null) return _database!;
     _database = await _initNativeDatabase();
     return _database!;
@@ -32,7 +30,6 @@ class DatabaseHelper {
       sqfliteFfiInit();
       sqlite.databaseFactory = databaseFactoryFfi;
     }
-
     String path = join(await sqlite.getDatabasesPath(), 'cogniner.db');
     return await sqlite.openDatabase(
       path,
@@ -65,7 +62,6 @@ class DatabaseHelper {
         synced                INTEGER DEFAULT 0
       )
     ''');
-
     await db.execute('''
       CREATE TABLE caregivers (
         caregiver_id          TEXT PRIMARY KEY,
@@ -78,8 +74,6 @@ class DatabaseHelper {
         synced                INTEGER DEFAULT 0
       )
     ''');
-
-    // --- NEW: LINKING TABLE FOR CAREGIVERS & PATIENTS ---
     await db.execute('''
       CREATE TABLE caregiver_patients (
         caregiver_id          TEXT,
@@ -89,7 +83,6 @@ class DatabaseHelper {
         FOREIGN KEY (patient_id) REFERENCES patients(user_id) ON DELETE CASCADE
       )
     ''');
-
     await db.execute('''
       CREATE TABLE game_sessions (
         session_id             TEXT PRIMARY KEY,
@@ -103,7 +96,6 @@ class DatabaseHelper {
         FOREIGN KEY (user_id) REFERENCES patients(user_id) ON DELETE CASCADE
       )
     ''');
-
     await db.execute('''
       CREATE TABLE music_sessions (
         session_id             TEXT PRIMARY KEY,
@@ -116,8 +108,6 @@ class DatabaseHelper {
       )
     ''');
   }
-
-  // ---------- PATIENTS & CAREGIVERS ----------
 
   Future<String> insertPatient({
     required String registrationNumber,
@@ -146,12 +136,10 @@ class DatabaseHelper {
       'last_activity_date': null,
       'synced': 0,
     };
-
     if (kIsWeb) {
       _webPatients.add(patientData);
       return id;
     }
-
     final db = await database;
     await db!.insert('patients', patientData);
     return id;
@@ -174,18 +162,14 @@ class DatabaseHelper {
       'institution': institution,
       'synced': 0,
     };
-
     if (kIsWeb) {
       _webCaregivers.add(caregiverData);
       return id;
     }
-
     final db = await database;
     await db!.insert('caregivers', caregiverData);
     return id;
   }
-
-  // ---------- NEW: SEARCH & LINKING LOGIC ----------
 
   Future<Map<String, dynamic>?> searchPatientByRegistration(String regNumber) async {
     if (kIsWeb) {
@@ -195,7 +179,6 @@ class DatabaseHelper {
         return null;
       }
     }
-
     final db = await database;
     final result = await db!.query('patients', where: 'registration_number = ?', whereArgs: [regNumber]);
     return result.isNotEmpty ? result.first : null;
@@ -206,9 +189,7 @@ class DatabaseHelper {
       _webCaregiverPatients.add({'caregiver_id': caregiverId, 'patient_id': patientId});
       return;
     }
-
     final db = await database;
-    // Use conflict algorithm replace to prevent duplicate links
     await db!.insert('caregiver_patients', {
       'caregiver_id': caregiverId,
       'patient_id': patientId,
@@ -220,9 +201,7 @@ class DatabaseHelper {
       final linkedPatientIds = _webCaregiverPatients.where((link) => link['caregiver_id'] == caregiverId).map((link) => link['patient_id']).toList();
       return _webPatients.where((p) => linkedPatientIds.contains(p['user_id'])).toList();
     }
-
     final db = await database;
-    // SQL JOIN to get patient details for all linked accounts
     return await db!.rawQuery('''
       SELECT p.* 
       FROM patients p
@@ -230,8 +209,6 @@ class DatabaseHelper {
       WHERE cp.caregiver_id = ?
     ''', [caregiverId]);
   }
-
-  // ---------- AUTHENTICATION & SCORING ----------
 
   Future<Map<String, dynamic>?> verifyLogin(String identifier, String password) async {
     if (kIsWeb) {
@@ -249,14 +226,11 @@ class DatabaseHelper {
         }
       }
     }
-
     final db = await database;
     final List<Map<String, dynamic>> pResult = await db!.query('patients', where: '(email = ? OR phone = ?) AND password = ?', whereArgs: [identifier, identifier, password]);
     if (pResult.isNotEmpty) return {'role': 'patient', 'data': pResult.first};
-
     final List<Map<String, dynamic>> cResult = await db.query('caregivers', where: '(email = ? OR phone = ?) AND password = ?', whereArgs: [identifier, identifier, password]);
     if (cResult.isNotEmpty) return {'role': 'caregiver', 'data': cResult.first};
-
     return null;
   }
 
@@ -283,14 +257,11 @@ class DatabaseHelper {
       }
       return;
     }
-
     final db = await database;
     await db!.update('patients', {
       'cumulative_score': cumulativeScore, 'daily_score': dailyScore, 'current_streak': currentStreak, 'last_activity_date': lastActivityDate, 'synced': 0,
     }, where: 'user_id = ?', whereArgs: [userId]);
   }
-
-  // --- SESSIONS AND SYNC SUPPORT REMAINS IDENTICAL BELOW ---
 
   Future<String> insertGameSession({
     required String userId, required String gameType, required int completionTimeSec, required int errorsMade, required int engagementScore,
@@ -315,6 +286,11 @@ class DatabaseHelper {
     final db = await database; return await db!.query('patients', where: 'synced = 0');
   }
 
+  Future<List<Map<String, dynamic>>> getUnsyncedCaregivers() async {
+    if (kIsWeb) return _webCaregivers.where((c) => c['synced'] == 0).toList();
+    final db = await database; return await db!.query('caregivers', where: 'synced = 0');
+  }
+
   Future<List<Map<String, dynamic>>> getUnsyncedGameSessions() async {
     if (kIsWeb) return _webGameSessions.where((s) => s['synced'] == 0).toList();
     final db = await database; return await db!.query('game_sessions', where: 'synced = 0');
@@ -330,6 +306,11 @@ class DatabaseHelper {
     final db = await database; await db!.update('patients', {'synced': 1}, where: 'user_id = ?', whereArgs: [userId]);
   }
 
+  Future<void> markCaregiverSynced(String caregiverId) async {
+    if (kIsWeb) { final idx = _webCaregivers.indexWhere((c) => c['caregiver_id'] == caregiverId); if (idx != -1) _webCaregivers[idx]['synced'] = 1; return; }
+    final db = await database; await db!.update('caregivers', {'synced': 1}, where: 'caregiver_id = ?', whereArgs: [caregiverId]);
+  }
+
   Future<void> markGameSessionSynced(String sessionId) async {
     if (kIsWeb) { final idx = _webGameSessions.indexWhere((s) => s['session_id'] == sessionId); if (idx != -1) _webGameSessions[idx]['synced'] = 1; return; }
     final db = await database; await db!.update('game_sessions', {'synced': 1}, where: 'session_id = ?', whereArgs: [sessionId]);
@@ -337,6 +318,6 @@ class DatabaseHelper {
 
   Future<void> markMusicSessionSynced(String sessionId) async {
     if (kIsWeb) { final idx = _webMusicSessions.indexWhere((s) => s['session_id'] == sessionId); if (idx != -1) _webMusicSessions[idx]['synced'] = 1; return; }
-    final db = await database; await db!.update('music_sessions', {'synced': 1}, where: 'session_id = ?', whereArgs: [sessionId]);
+    final db = await database; await db!.update('music_sessions', {'synced': 1}, where: 'synced = ?', whereArgs: [sessionId]);
   }
 }
