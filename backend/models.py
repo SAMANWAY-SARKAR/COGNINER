@@ -1,45 +1,55 @@
-# models.py
-#
-# SQLAlchemy models — the Python equivalent of the CREATE TABLE
-# statements you already ran in Postgres. This doesn't create new
-# tables; it describes the ones that already exist so Python code
-# can read/write them without writing raw SQL.
-#
-# requirements.txt needs:
-#   sqlalchemy
-#   psycopg2-binary   (the actual PostgreSQL driver)
-
 import uuid
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Table
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from database import Base  # Base comes from database.py — every model inherits from it
+from database import Base
 
+# --- NEW: Linking Table for Caregivers & Patients ---
+caregiver_patients = Table(
+    "caregiver_patients",
+    Base.metadata,
+    Column("caregiver_id", UUID(as_uuid=True), ForeignKey("caregivers.caregiver_id", ondelete="CASCADE"), primary_key=True),
+    Column("patient_id", UUID(as_uuid=True), ForeignKey("patients.user_id", ondelete="CASCADE"), primary_key=True)
+)
+
+class Caregiver(Base):
+    __tablename__ = "caregivers"
+
+    caregiver_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), nullable=False)
+    email = Column(String(255), unique=True, nullable=True)
+    phone = Column(String(20), unique=True, nullable=True)
+    password = Column(String(255), nullable=True)
+    institution = Column(String(255), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    synced = Column(Integer, default=1)
+
+    patients = relationship("Patient", secondary=caregiver_patients, back_populates="caregivers")
 
 class Patient(Base):
     __tablename__ = "patients"
 
     user_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    registration_number = Column(String(50), unique=True, nullable=True) 
     name = Column(String(100), nullable=False)
+    email = Column(String(255), unique=True, nullable=True)
+    phone = Column(String(20), unique=True, nullable=True)
+    password = Column(String(255), nullable=True)
     age = Column(Integer)
+    photo = Column(Text, nullable=True) 
     language_preference = Column(String(50), default="Assamese")
     baseline_score = Column(Integer, default=50)
+    cumulative_score = Column(Integer, default=0)
+    daily_score = Column(Integer, default=0)
+    current_streak = Column(Integer, default=0)
+    last_activity_date = Column(String(20), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
-    synced = Column(Integer, default=1)  # rows created server-side start "synced"
+    synced = Column(Integer, default=1)
 
-    # This is what ON DELETE CASCADE looks like from the Python side —
-    # deleting a Patient object also deletes its related sessions.
-    game_sessions = relationship(
-        "GameSession", back_populates="patient", cascade="all, delete-orphan"
-    )
-    music_sessions = relationship(
-        "MusicSession", back_populates="patient", cascade="all, delete-orphan"
-    )
-    alerts = relationship(
-        "CaregiverAlert", back_populates="patient", cascade="all, delete-orphan"
-    )
-
+    caregivers = relationship("Caregiver", secondary=caregiver_patients, back_populates="patients")
+    game_sessions = relationship("GameSession", back_populates="patient", cascade="all, delete-orphan")
+    music_sessions = relationship("MusicSession", back_populates="patient", cascade="all, delete-orphan")
 
 class GameSession(Base):
     __tablename__ = "game_sessions"
@@ -54,7 +64,6 @@ class GameSession(Base):
 
     patient = relationship("Patient", back_populates="game_sessions")
 
-
 class MusicSession(Base):
     __tablename__ = "music_sessions"
 
@@ -65,15 +74,3 @@ class MusicSession(Base):
     timestamp = Column(DateTime, server_default=func.now())
 
     patient = relationship("Patient", back_populates="music_sessions")
-
-
-class CaregiverAlert(Base):
-    __tablename__ = "caregiver_alerts"
-
-    alert_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("patients.user_id", ondelete="CASCADE"))
-    alert_type = Column(String(50), nullable=False)
-    message = Column(Text, nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-
-    patient = relationship("Patient", back_populates="alerts")

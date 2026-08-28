@@ -4,22 +4,14 @@ import 'dart:math';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-// import 'dart:io';
 import 'package:easy_localization/easy_localization.dart';
 import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
 
-// --- GLOBAL SETTINGS STATE --
+import 'database_helper.dart'; 
+import 'score.dart'; 
+import 'sync_service.dart'; 
 
-import 'database_helper.dart'; // Import your new file
-import 'score.dart'; // Import your new ScoreService file
-import 'sync_service.dart'; // --- 1. IMPORT YOUR NEW SERVICE ---
-
-// Import your screens here! Make sure the file names match yours.
-// import 'registration_screen.dart';
-// import 'dashboard_screen.dart'; 
-
-// Global Settings State
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
 final ValueNotifier<double> textScaleNotifier = ValueNotifier(1.0);
 
@@ -27,40 +19,38 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await EasyLocalization.ensureInitialized();
   
-  // 1. Initialize the SQLite Database
   final dbHelper = DatabaseHelper.instance;
   await dbHelper.database; 
   
   final prefs = await SharedPreferences.getInstance();
   
-  // --- SETTINGS DATA ---
-  final isDark = prefs.getBool('isDarkMode') ?? false; //[cite: 2]
-  final isLarge = prefs.getBool('isLargeText') ?? false; //[cite: 2]
-  themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light; //[cite: 2]
-  textScaleNotifier.value = isLarge ? 1.2 : 1.0; //[cite: 2]
+  final isDark = prefs.getBool('isDarkMode') ?? false; 
+  final isLarge = prefs.getBool('isLargeText') ?? false; 
+  themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light; 
+  textScaleNotifier.value = isLarge ? 1.2 : 1.0; 
   
-  // --- NEW LOGIN CHECK ---
-  // Check the SQLite database to see if a patient profile exists[cite: 3]
-  final patients = await dbHelper.getAllPatients();
-  final bool isRegistered = patients.isNotEmpty;
-  // --- 2. TRIGGER BACKGROUND SYNC ---
-  // We don't use 'await' here because we want the app to open instantly 
-  // while this runs quietly in the background.
+  // Check if someone is logged in AND what their role is
+  final String? loggedInUserId = prefs.getString('sqlite_user_id');
+  final String? userRole = prefs.getString('user_role'); // 'patient' or 'caregiver'
+  final bool isRegistered = loggedInUserId != null;
+
   SyncService().trySync();
+
   runApp(
     EasyLocalization(
-      supportedLocales: const [Locale('en'), Locale('hi'), Locale('bn')], //[cite: 2]
-      path: 'assets/translations', //[cite: 2]
-      fallbackLocale: const Locale('en'), //[cite: 2]
-      child: DementiaCareApp(isRegistered: isRegistered), //[cite: 2]
+      supportedLocales: const [Locale('en'), Locale('hi'), Locale('bn')], 
+      path: 'assets/translations', 
+      fallbackLocale: const Locale('en'), 
+      child: DementiaCareApp(isRegistered: isRegistered, userRole: userRole), 
     ),
   );
 }
 
 class DementiaCareApp extends StatelessWidget {
   final bool isRegistered;
+  final String? userRole;
   
-  const DementiaCareApp({super.key, required this.isRegistered});
+  const DementiaCareApp({super.key, required this.isRegistered, this.userRole});
 
   @override
   Widget build(BuildContext context) {
@@ -70,6 +60,17 @@ class DementiaCareApp extends StatelessWidget {
         return ValueListenableBuilder<ThemeMode>(
           valueListenable: themeNotifier,
           builder: (context, currentMode, _) {
+            
+            // Route Logic: Send unregistered users to Login instead of Registration
+            Widget initialScreen;
+            if (!isRegistered) {
+              initialScreen = const LoginScreen(); // NEW DEFAULT
+            } else if (userRole == 'caregiver') {
+              initialScreen = const CaregiverDashboard();
+            } else {
+              initialScreen = const PatientDashboard();
+            }
+
             return MaterialApp(
               title: 'Cognitive Care',
               localizationsDelegates: context.localizationDelegates,
@@ -94,10 +95,7 @@ class DementiaCareApp extends StatelessWidget {
                   child: child!,
                 );
               },
-              
-              // --- THE ROUTING MAGIC ---
-              // If registered is true, go to Dashboard. If false, go to Registration!
-              home: isRegistered ? const PatientDashboard() : const RegistrationScreen(),
+              home: initialScreen,
             );
           },
         );
@@ -105,6 +103,147 @@ class DementiaCareApp extends StatelessWidget {
     );
   }
 }
+
+//////////////////////////////////////////////////
+//////////////////////////////////////////////////
+///                                            ///
+///             LOG IN SCREEN                  ///
+///                                            ///
+//////////////////////////////////////////////////
+//////////////////////////////////////////////////
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController identifierController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  bool isLoading = false;
+
+  Future<void> _login() async {
+    if (identifierController.text.trim().isEmpty || passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your Email/Phone and Password.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    // Call the SQLite verification function
+    final result = await DatabaseHelper.instance.verifyLogin(
+      identifierController.text.trim(),
+      passwordController.text,
+    );
+
+    if (result == null) {
+      setState(() => isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invalid credentials. Please try again.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    // Login Success! Save data based on role
+    final role = result['role'];
+    final data = result['data'];
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString('user_role', role);
+    await prefs.setString('user_name', data['name']);
+    await prefs.setString('user_email', data['email'] ?? '');
+    await prefs.setString('user_phone', data['phone'] ?? '');
+
+    if (role == 'patient') {
+      await prefs.setString('sqlite_user_id', data['user_id']);
+      SyncService().trySync();
+      if (mounted) {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PatientDashboard()));
+      }
+    } else {
+      await prefs.setString('sqlite_user_id', data['caregiver_id']);
+      await prefs.setString('user_institution', data['institution'] ?? '');
+      SyncService().trySync();
+      if (mounted) {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const CaregiverDashboard()));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.psychology, size: 80, color: Colors.teal),
+              const SizedBox(height: 20),
+              const Text(
+                'Welcome Back',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.teal),
+              ),
+              const SizedBox(height: 8),
+              const Text('Log in to continue to Cognitive Care'),
+              const SizedBox(height: 40),
+
+              TextField(
+                controller: identifierController,
+                decoration: InputDecoration(
+                  labelText: 'Email or Phone Number',
+                  prefixIcon: const Icon(Icons.person, color: Colors.teal),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  prefixIcon: const Icon(Icons.lock, color: Colors.teal),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 30),
+
+              isLoading 
+                ? const CircularProgressIndicator()
+                : SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.teal,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: _login,
+                      child: const Text('Log In', style: TextStyle(fontSize: 18, color: Colors.white)),
+                    ),
+                  ),
+              
+              const SizedBox(height: 20),
+              TextButton(
+                onPressed: () {
+                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const RegistrationScreen()));
+                },
+                child: const Text('Don\'t have an account? Sign Up', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
@@ -122,69 +261,134 @@ class RegistrationScreen extends StatefulWidget {
 }
 
 class _RegistrationScreenState extends State<RegistrationScreen> {
+  String _selectedRole = 'patient'; 
+
   final TextEditingController nameController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController addressController = TextEditingController();
+  final TextEditingController ageController = TextEditingController();
+  final TextEditingController institutionController = TextEditingController();
+  
+  // --- NEW: PASSWORD CONTROLLERS ---
+  final TextEditingController passwordController = TextEditingController();
+  final TextEditingController confirmPasswordController = TextEditingController();
 
   Uint8List? _profileImageBytes;
   String? _base64Image;
 
-  // Opens the gallery and converts the image to Web/Mobile safe format
   Future<void> _pickImage() async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
 
     if (image != null) {
-      // Read as bytes (Works on Web and Mobile)
       Uint8List imageBytes = await image.readAsBytes();
       setState(() {
         _profileImageBytes = imageBytes;
-        // Convert to a string so we can save it in SharedPreferences
         _base64Image = base64Encode(imageBytes);
       });
     }
   }
 
   Future<void> _saveAndLogin() async {
-    // Basic validation[cite: 2]
-    if (nameController.text.isEmpty || emailController.text.isEmpty) { //[cite: 2]
-      ScaffoldMessenger.of(context).showSnackBar( //[cite: 2]
-        const SnackBar(content: Text('Please enter your Name and Email'), backgroundColor: Colors.red), //[cite: 2]
-      );
-      return; //[cite: 2]
+    final emailRegex = RegExp(r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+");
+    final phoneRegex = RegExp(r"^[6-9]\d{9}$");
+
+    if (nameController.text.trim().isEmpty || emailController.text.trim().isEmpty || phoneController.text.trim().isEmpty) {
+      _showError('Name, Email, and Phone are required.');
+      return;
+    }
+    
+    if (!emailRegex.hasMatch(emailController.text.trim())) {
+      _showError('Please enter a valid email address.');
+      return;
+    }
+    
+    if (!phoneRegex.hasMatch(phoneController.text.trim())) {
+      _showError('Please enter a valid 10-digit Indian phone number.');
+      return;
     }
 
-    // 1. Save core data to SQLite and get the unique ID[cite: 3]
-    final dbHelper = DatabaseHelper.instance;
-    final String generatedUserId = await dbHelper.insertPatient(
-      name: nameController.text.trim(),
-    );
+    // --- NEW: PASSWORD VALIDATION ---
+    if (passwordController.text.isEmpty || passwordController.text.length < 6) {
+      _showError('Password must be at least 6 characters long.');
+      return;
+    }
+    if (passwordController.text != confirmPasswordController.text) {
+      _showError('Passwords do not match.');
+      return;
+    }
 
-    // 2. Save the UI details and the new SQLite ID to SharedPreferences[cite: 2, 3]
     final prefs = await SharedPreferences.getInstance();
-    
-    // Save the crucial SQLite ID so the Dashboard and Games know who is playing!
-    await prefs.setString('sqlite_user_id', generatedUserId); 
-    
-    await prefs.setString('user_name', nameController.text.trim()); //[cite: 2]
-    await prefs.setString('user_email', emailController.text.trim()); //[cite: 2]
-    await prefs.setString('user_phone', phoneController.text.trim()); //[cite: 2]
-    await prefs.setString('user_address', addressController.text.trim()); //[cite: 2]
-    
-    if (_base64Image != null) { //[cite: 2]
-      await prefs.setString('user_photo', _base64Image!); //[cite: 2]
-    }
-    // --- NEW: TRY TO SYNC THE NEW PATIENT ---
-    SyncService().trySync();
-    // 3. Navigate to Dashboard[cite: 2]
-    if (mounted) {
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PatientDashboard())); //[cite: 2]
-      
-      ScaffoldMessenger.of(context).showSnackBar( //[cite: 2]
-        const SnackBar(content: Text('Registration Successful!'), backgroundColor: Colors.green), //[cite: 2]
+    int lastId = prefs.getInt('global_last_registration_number') ?? 2500000;
+    int newRegistrationNumber = lastId + 1;
+    await prefs.setInt('global_last_registration_number', newRegistrationNumber);
+    await prefs.setString('user_registration_number', newRegistrationNumber.toString());
+    await prefs.setString('user_role', _selectedRole); 
+
+    final dbHelper = DatabaseHelper.instance;
+    String generatedUserId = "";
+
+    if (_selectedRole == 'patient') {
+      final int? parsedAge = int.tryParse(ageController.text.trim());
+      if (parsedAge == null || parsedAge <= 0 || parsedAge > 130) {
+        _showError('Please enter a valid age for the patient.');
+        return;
+      }
+      generatedUserId = await dbHelper.insertPatient(
+        registrationNumber: newRegistrationNumber.toString(), // NEW: Save to DB
+        name: nameController.text.trim(),
+        email: emailController.text.trim(),
+        phone: phoneController.text.trim(),
+        password: passwordController.text, 
+        age: parsedAge,
+        photo: _base64Image, // NEW: Save to DB
+      );
+    } else {
+      if (institutionController.text.trim().isEmpty) {
+        _showError('Please enter your Institution/NGO/Hospital.');
+        return;
+      }
+      generatedUserId = await dbHelper.insertCaregiver(
+        name: nameController.text.trim(),
+        email: emailController.text.trim(),
+        phone: phoneController.text.trim(),
+        password: passwordController.text, // Passed to DB
+        institution: institutionController.text.trim(),
       );
     }
+
+    await prefs.setString('sqlite_user_id', generatedUserId); 
+    await prefs.setString('user_name', nameController.text.trim());
+    await prefs.setString('user_email', emailController.text.trim());
+    await prefs.setString('user_phone', phoneController.text.trim());
+    await prefs.setString('user_address', addressController.text.trim());
+    if (_selectedRole == 'caregiver') {
+      await prefs.setString('user_institution', institutionController.text.trim());
+    }
+    
+    if (_base64Image != null) {
+      await prefs.setString('user_photo', _base64Image!);
+    }
+
+    SyncService().trySync();
+
+    if (mounted) {
+      if (_selectedRole == 'caregiver') {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const CaregiverDashboard()));
+      } else {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PatientDashboard()));
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Registration Successful!'), backgroundColor: Colors.green),
+      );
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
   }
 
   @override
@@ -200,10 +404,55 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.teal),
             ),
             const SizedBox(height: 8),
-            const Text('Please enter your details to set up your profile.'),
+            const Text('Who are you creating this account for?'),
+            const SizedBox(height: 20),
+
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(() => _selectedRole = 'patient'),
+                    child: Card(
+                      color: _selectedRole == 'patient' ? Colors.teal : Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Column(
+                          children: [
+                            Icon(Icons.elderly, size: 40, color: _selectedRole == 'patient' ? Colors.white : Colors.teal),
+                            const SizedBox(height: 8),
+                            Text('Patient', style: TextStyle(fontWeight: FontWeight.bold, color: _selectedRole == 'patient' ? Colors.white : Colors.teal)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(() => _selectedRole = 'caregiver'),
+                    child: Card(
+                      color: _selectedRole == 'caregiver' ? Colors.teal : Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Column(
+                          children: [
+                            Icon(Icons.medical_services, size: 40, color: _selectedRole == 'caregiver' ? Colors.white : Colors.teal),
+                            const SizedBox(height: 8),
+                            Text('Caregiver', style: TextStyle(fontWeight: FontWeight.bold, color: _selectedRole == 'caregiver' ? Colors.white : Colors.teal)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            
             const SizedBox(height: 30),
 
-            // --- PHOTO UPLOAD ---
             GestureDetector(
               onTap: _pickImage,
               child: Stack(
@@ -212,12 +461,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                   CircleAvatar(
                     radius: 60,
                     backgroundColor: Colors.teal.shade100,
-                    backgroundImage: _profileImageBytes != null 
-                        ? MemoryImage(_profileImageBytes!) 
-                        : null,
-                    child: _profileImageBytes == null 
-                        ? const Icon(Icons.add_a_photo, size: 40, color: Colors.teal) 
-                        : null,
+                    backgroundImage: _profileImageBytes != null ? MemoryImage(_profileImageBytes!) : null,
+                    child: _profileImageBytes == null ? const Icon(Icons.add_a_photo, size: 40, color: Colors.teal) : null,
                   ),
                   const CircleAvatar(
                     radius: 18,
@@ -229,18 +474,32 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             ),
             const SizedBox(height: 30),
 
-            // --- TEXT FIELDS ---
             _buildTextField(nameController, 'Full Name', Icons.person),
             const SizedBox(height: 16),
+            
+            if (_selectedRole == 'patient') ...[
+              _buildTextField(ageController, 'Patient Age', Icons.cake, keyboardType: TextInputType.number),
+              const SizedBox(height: 16),
+            ],
+            if (_selectedRole == 'caregiver') ...[
+              _buildTextField(institutionController, 'Institution / NGO / Hospital', Icons.local_hospital),
+              const SizedBox(height: 16),
+            ],
+
             _buildTextField(emailController, 'Email ID', Icons.email, keyboardType: TextInputType.emailAddress),
             const SizedBox(height: 16),
             _buildTextField(phoneController, 'Phone Number', Icons.phone, keyboardType: TextInputType.phone),
             const SizedBox(height: 16),
-            _buildTextField(addressController, 'Home Address', Icons.home, maxLines: 3),
+            _buildTextField(addressController, 'Address', Icons.home, maxLines: 3),
+            const SizedBox(height: 16),
+            
+            // --- NEW: PASSWORD FIELDS ---
+            _buildTextField(passwordController, 'Password', Icons.lock, obscureText: true),
+            const SizedBox(height: 16),
+            _buildTextField(confirmPasswordController, 'Confirm Password', Icons.lock_outline, obscureText: true),
             
             const SizedBox(height: 40),
 
-            // --- SUBMIT BUTTON ---
             SizedBox(
               width: double.infinity,
               height: 50,
@@ -253,17 +512,27 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 child: const Text('Save & Continue', style: TextStyle(fontSize: 18, color: Colors.white)),
               ),
             ),
+            
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () {
+                Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+              },
+              child: const Text('Already have an account? Log In', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 20),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTextField(TextEditingController controller, String label, IconData icon, {int maxLines = 1, TextInputType? keyboardType}) {
+  Widget _buildTextField(TextEditingController controller, String label, IconData icon, {int maxLines = 1, TextInputType? keyboardType, bool obscureText = false}) {
     return TextField(
       controller: controller,
-      maxLines: maxLines,
+      maxLines: obscureText ? 1 : maxLines,
       keyboardType: keyboardType,
+      obscureText: obscureText,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, color: Colors.teal),
@@ -281,7 +550,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
 ///                                            ///
-///                DASHBOARD                   ///
+///        PATEINT DASHBOARD                   ///
 ///                                            ///
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
@@ -298,18 +567,15 @@ class _PatientDashboardState extends State<PatientDashboard> {
   int cumulativeScore = 0; 
   int totalDailyScore = 0;
   
-  // --- ADD THESE THREE LINES BACK ---
   int dailyGameScore = 0; 
   int routinesCheckedToday = 0; 
   int routinePoints = 0; 
-  // ----------------------------------
 
   String userName = "Loading...";
   String userId = ""; 
 
-  // Visual 7-day tracker 
-  List<bool> last7DaysStatus = [false, true, true, true, true, true, true];
-  List<String> dayLabels = ['W', 'T', 'F', 'S', 'S', 'M', 'T']; 
+  List<bool> last7DaysStatus = [false, false, false, false, false, false, false];
+  List<String> dayLabels = ['-', '-', '-', '-', '-', '-', '-']; 
 
   @override
   void initState() {
@@ -317,34 +583,98 @@ class _PatientDashboardState extends State<PatientDashboard> {
     _loadDashboardData();
   }
 
-  // This replaces _loadUserName(), _calculateScores(), and _checkStreakCondition()
   Future<void> _loadDashboardData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    setState(() {
-      userName = prefs.getString('user_name') ?? "User"; 
-      userId = prefs.getString('sqlite_user_id') ?? ""; 
-    });
+    // --- 1. Load User Info ---
+    String fetchedUserName = prefs.getString('user_name') ?? "User"; 
+    String fetchedUserId = prefs.getString('sqlite_user_id') ?? ""; 
 
-    if (userId.isNotEmpty) {
+    // --- 2. Track App Open Dates for 7-Day Visual ---
+    DateTime now = DateTime.now();
+    String todayDateString = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+    
+    List<String> activeDates = [];
+    String? activeDatesJson = prefs.getString('active_dates');
+    if (activeDatesJson != null) {
+      activeDates = List<String>.from(jsonDecode(activeDatesJson));
+    }
+    
+    // Mark today as active because they just opened the app!
+    if (!activeDates.contains(todayDateString)) {
+      activeDates.add(todayDateString);
+      if (activeDates.length > 30) activeDates.removeAt(0); // Keep list small
+      await prefs.setString('active_dates', jsonEncode(activeDates));
+    }
+
+    // Generate 7-day booleans and labels dynamically based on the past 7 days
+    List<bool> new7DaysStatus = [];
+    List<String> newDayLabels = [];
+    List<String> weekDays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    
+    for (int i = 6; i >= 0; i--) {
+      DateTime pastDay = now.subtract(Duration(days: i));
+      String pastDayStr = "${pastDay.year}-${pastDay.month.toString().padLeft(2, '0')}-${pastDay.day.toString().padLeft(2, '0')}";
+      
+      new7DaysStatus.add(activeDates.contains(pastDayStr));
+      newDayLabels.add(weekDays[pastDay.weekday - 1]);
+    }
+
+    // --- 3. Calculate Routines Done Today ---
+    int routinesDone = 0;
+    String? savedRoutineDate = prefs.getString('routine_date');
+    String? savedTasksJson = prefs.getString('routine_tasks');
+    
+    if (savedRoutineDate == todayDateString && savedTasksJson != null) {
+      List<dynamic> decodedList = jsonDecode(savedTasksJson);
+      for (var item in decodedList) {
+        if (item['isCompleted'] == true) {
+          routinesDone++;
+        }
+      }
+    }
+
+    // --- 4. Load Database Scores ---
+    int dbCumulative = 0;
+    int dbDaily = 0;
+    int dbStreak = 0;
+
+    if (fetchedUserId.isNotEmpty) {
       final dbHelper = DatabaseHelper.instance;
       final patients = await dbHelper.getAllPatients();
       
-      // Find the currently logged-in patient
       final patient = patients.firstWhere(
-        (p) => p['user_id'] == userId,
+        (p) => p['user_id'] == fetchedUserId,
         orElse: () => {},
       );
 
       if (patient.isNotEmpty) {
-        setState(() {
-          // Fetch the real values from SQLite calculated by ScoreService
-          totalStreakDays = patient['current_streak'] ?? 0;
-          cumulativeScore = patient['cumulative_score'] ?? 0;
-          totalDailyScore = patient['daily_score'] ?? 0;
-        });
+        dbCumulative = patient['cumulative_score'] as int? ?? 0;
+        dbDaily = patient['daily_score'] as int? ?? 0;
+        dbStreak = patient['current_streak'] as int? ?? 0;
       }
     }
+
+    // --- 5. Update State ---
+    setState(() {
+      userName = fetchedUserName;
+      userId = fetchedUserId;
+      
+      last7DaysStatus = new7DaysStatus;
+      dayLabels = newDayLabels;
+
+      totalStreakDays = dbStreak;
+      cumulativeScore = dbCumulative;
+      totalDailyScore = dbDaily;
+      
+      // Calculate breakdown metrics
+      routinesCheckedToday = routinesDone;
+      routinePoints = routinesDone * 20;
+      
+      // Game score is total daily score minus the points earned from routines
+      dailyGameScore = totalDailyScore - routinePoints;
+      if (dailyGameScore < 0) dailyGameScore = 0; // Failsafe
+    });
   }
 
   @override
@@ -355,7 +685,6 @@ class _PatientDashboardState extends State<PatientDashboard> {
         centerTitle: true,
         elevation: 0,
       ),
-      // Hamburger Menu from our initial foundation
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
@@ -532,26 +861,30 @@ class _PatientDashboardState extends State<PatientDashboard> {
             
             const SizedBox(height: 24),
             
-            // --- NAVIGATION GRID ---
+           // --- NAVIGATION GRID ---
             GridView.count(
               shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(), // Disables scrolling inside the grid so the whole page scrolls
+              physics: const NeverScrollableScrollPhysics(), 
               crossAxisCount: 2,
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
               childAspectRatio: 1.1,
               children: [
                 _buildNavCard(context,'Daily routine', Icons.checklist, const Color.fromARGB(255, 3, 86, 26), onTap: () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const DailyRoutineScreen()));
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const DailyRoutineScreen())).then((_) => _loadDashboardData());
                   }),
                   _buildNavCard(context, 'Games', Icons.videogame_asset, const Color.fromARGB(255, 48, 3, 248), onTap: () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const GameSelectionScreen()));
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const GameSelectionScreen())).then((_) => _loadDashboardData());
                   }),
                   _buildNavCard(context, 'Music Therapy', Icons.music_note, const Color.fromARGB(255, 181, 14, 131), onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const MusicLibraryScreen()));
                   }),
                   _buildNavCard(context, 'Family', Icons.family_restroom, const Color.fromARGB(255, 250, 2, 2), onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const FamilyScreen()));
+                  }),
+                  // --- NEW REMINDERS BUTTON ---
+                  _buildNavCard(context, 'Reminders', Icons.alarm, Colors.orange.shade700, onTap: () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const RemindersSelectionScreen()));
                   }),
               ],
             ),
@@ -667,7 +1000,7 @@ class PatternRecognitionScreen extends StatefulWidget {
 
 class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
   int level = 1;
-  int lives = 5;
+  int lives = 10; // Increased to 10
   int score = 0;
   
   bool isMemorizePhase = true;
@@ -678,7 +1011,6 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
   List<Color> optionsColors = [];
   List<Color> selectedColors = [];
 
-  // A wide variety of distinct colors to ensure the game works properly
   final List<Color> masterColors = [
     Colors.red, Colors.blue, Colors.green, Colors.yellow, 
     Colors.orange, Colors.purple, Colors.pink, Colors.cyan, 
@@ -701,25 +1033,21 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
   void _setupLevel() {
     _timer?.cancel();
     
-    // Level 1 starts with 2 colors. Caps at 6 colors max to keep it possible from 10 choices.
     int targetCount = min(level + 1, 6);
     
-    // 1. Pick the target colors
     masterColors.shuffle();
     targetColors = masterColors.take(targetCount).toList();
 
-    // 2. Build the 10 options (Must include all targets + random fillers)
     optionsColors = List.from(targetColors);
     var remainingColors = masterColors.skip(targetCount).toList();
     remainingColors.shuffle();
     optionsColors.addAll(remainingColors.take(10 - targetCount));
-    optionsColors.shuffle(); // Shuffle so targets aren't always first
+    optionsColors.shuffle(); 
 
-    // 3. Reset state for the new level
     selectedColors.clear();
     isMemorizePhase = true;
     countdown = 15;
-    lives = 5; // Refill 5 stars on every new level
+    lives = 10; // Refill 10 stars on every new level
 
     setState(() {});
     _startTimer();
@@ -734,7 +1062,7 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
       } else {
         _timer?.cancel();
         setState(() {
-          isMemorizePhase = false; // Transition to guessing phase
+          isMemorizePhase = false; 
         });
       }
     });
@@ -745,27 +1073,34 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
 
     setState(() {
       if (selectedColors.contains(color)) {
-        selectedColors.remove(color); // Deselect if already tapped
+        selectedColors.remove(color); 
       } else {
         selectedColors.add(color);
       }
     });
 
-    // When the user has selected the required amount of colors, check if they won
     if (selectedColors.length == targetColors.length) {
       _checkWinCondition();
     }
   }
 
   Future<void> _checkWinCondition() async {
-    // Check if every selected color is present in the target colors list
     bool isCorrect = selectedColors.every((color) => targetColors.contains(color));
 
     if (isCorrect) {
+      int earnedPoints = 10 * level; // Calculate points
+
       setState(() {
-        score += 10 * level;
+        score += earnedPoints;
       });
-      
+
+      // --- SAVE TO DATABASE ---
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('sqlite_user_id') ?? "";
+      if (userId.isNotEmpty) {
+        await ScoreService().recordActivity(userId: userId, earnedPoints: earnedPoints);
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Correct! Great job!'), backgroundColor: Colors.green),
       );
@@ -777,7 +1112,7 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
     } else {
       setState(() {
         lives--;
-        selectedColors.clear(); // Clear selection for a retry
+        selectedColors.clear(); 
       });
 
       if (lives <= 0) {
@@ -800,7 +1135,7 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); 
               setState(() {
                 level = 1;
                 score = 0;
@@ -812,7 +1147,7 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.pop(context); // Back to previous screen
+              Navigator.pop(context); 
             },
             child: const Text('Exit'),
           )
@@ -837,15 +1172,16 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
       ),
       body: Column(
         children: [
-          // Lives Display
+          // 10 Lives Display with Wrap to prevent screen overflow
           Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(5, (index) => Icon(
+            padding: const EdgeInsets.all(12.0),
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 4,
+              children: List.generate(10, (index) => Icon(
                 index < lives ? Icons.star : Icons.star_border,
                 color: Colors.amber,
-                size: 40,
+                size: 32,
               )),
             ),
           ),
@@ -858,7 +1194,6 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
     );
   }
 
-  // --- UI for the 15-second Memorization Phase ---
   Widget _buildMemorizePhase() {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -890,7 +1225,6 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
         const SizedBox(height: 40),
         ElevatedButton(
           onPressed: () {
-            // Optional: Let the user skip the timer if they memorized it quickly
             _timer?.cancel();
             setState(() {
               isMemorizePhase = false;
@@ -905,7 +1239,6 @@ class _PatternRecognitionScreenState extends State<PatternRecognitionScreen> {
     );
   }
 
-  // --- UI for the Guessing Phase ---
   Widget _buildSelectionPhase() {
     return Column(
       children: [
@@ -964,7 +1297,7 @@ class SongRecognitionScreen extends StatefulWidget {
 
 class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
   int level = 1;
-  int lives = 5;
+  int lives = 10; // Increased to 10
   int score = 0;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -975,8 +1308,6 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
   List<Map<String, String>> shuffledSongs = [];
   int currentSongIndex = 0;
 
-  // --- REPLACE THESE WITH YOUR ACTUAL SONGS AND NAMES ---
-  // Ensure the paths match where you upload them in your assets folder
   final List<Map<String, String>> songDatabase = [
     {'path': 'audio/song 1.mp3', 'name': 'First Song Name'},
     {'path': 'audio/song 2.mp3', 'name': 'Second Song Name'},
@@ -1002,7 +1333,6 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
       }
     });
 
-    // Create a random order of all songs
     shuffledSongs = List.from(songDatabase);
     shuffledSongs.shuffle();
 
@@ -1011,26 +1341,21 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
 
   @override
   void dispose() {
-    _audioPlayer.dispose(); // Stop memory leaks when leaving the screen
+    _audioPlayer.dispose(); 
     super.dispose();
   }
 
   void _setupLevel() {
-    lives = 5;
+    lives = 10; // Refill 10 stars
 
-    // If all songs have been used, create a new random order
     if (currentSongIndex >= shuffledSongs.length) {
       shuffledSongs = List.from(songDatabase);
       shuffledSongs.shuffle();
       currentSongIndex = 0;
     }
 
-    // Get the next song from the shuffled list
     currentSong = shuffledSongs[currentSongIndex];
-
-    // Move to the next song for the next level
     currentSongIndex++;
-
     _generateOptions();
 
     setState(() {});
@@ -1040,7 +1365,6 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
     currentOptions.clear();
     currentOptions.add(currentSong['name']!);
 
-    // Get 3 random wrong answers from the database
     List<Map<String, String>> wrongChoices = List.from(songDatabase)
       ..removeWhere((song) => song['name'] == currentSong['name']);
     wrongChoices.shuffle();
@@ -1049,21 +1373,16 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
       currentOptions.add(wrongChoices[i]['name']!);
     }
 
-    currentOptions.shuffle(); // Shuffle the 4 options so the correct one isn't always first
+    currentOptions.shuffle(); 
   }
 
   Future<void> _toggleAudio() async {
     if (isPlaying) {
       await _audioPlayer.pause();
     } else {
-      // NOTE: When you replace the 'Add songs 1' with real paths like 'audio/song1.mp3', 
-      // change UrlSource to AssetSource if they are local assets.
-      // Example: await _audioPlayer.play(AssetSource(currentSong['path']!));
-      
       try {
-        await _audioPlayer.play(AssetSource(currentSong['path']!)); // Using UrlSource as a placeholder
+        await _audioPlayer.play(AssetSource(currentSong['path']!)); 
       } catch (e) {
-        // Fallback for testing UI before adding actual audio files
         ScaffoldMessenger.of(context).showSnackBar(
            SnackBar(content: Text('Audio file "${currentSong['path']}" not found. Add real paths!')),
         );
@@ -1071,29 +1390,35 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
     }
   }
 
-  void _checkAnswer(String selectedName) {
+  // Added 'async' here so we can await SharedPreferences
+  void _checkAnswer(String selectedName) async { 
     if (selectedName == currentSong['name']) {
-      // Correct Answer
       _audioPlayer.stop();
+      
+      int earnedPoints = 10 * level; // Calculate points
+
       setState(() {
-        score += 10 * level;
+        score += earnedPoints;
       });
+
+      // --- SAVE TO DATABASE ---
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('sqlite_user_id') ?? "";
+      if (userId.isNotEmpty) {
+        await ScoreService().recordActivity(userId: userId, earnedPoints: earnedPoints);
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Correct! Great job!'), backgroundColor: Colors.green),
       );
 
-      // Move to next level after a short delay
       Future.delayed(const Duration(seconds: 1), () {
         if (mounted) {
-          
             level++;
             _setupLevel();
-        
         }
       });
     } else {
-      // Wrong Answer
       setState(() {
         lives--;
       });
@@ -1119,7 +1444,7 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); 
               setState(() {
                 level = 1;
                 score = 0;
@@ -1131,7 +1456,7 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.pop(context); // Back to previous screen
+              Navigator.pop(context); 
             },
             child: const Text('Exit'),
           )
@@ -1156,22 +1481,22 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
       ),
       body: Column(
         children: [
-          // Lives Display
+          // 10 Lives Display with Wrap
           Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(5, (index) => Icon(
+            padding: const EdgeInsets.all(12.0),
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 4,
+              children: List.generate(10, (index) => Icon(
                 index < lives ? Icons.star : Icons.star_border,
                 color: Colors.amber,
-                size: 40,
+                size: 32,
               )),
             ),
           ),
           
           const SizedBox(height: 30),
 
-          // Audio Player UI
           Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
@@ -1194,7 +1519,6 @@ class _SongRecognitionScreenState extends State<SongRecognitionScreen> {
           
           const Spacer(),
 
-          // 4 Multiple Choice Options
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
@@ -1240,13 +1564,12 @@ class MemoryGameScreen extends StatefulWidget {
 
 class _MemoryGameScreenState extends State<MemoryGameScreen> {
   int level = 1;
-  int lives = 5;
+  int lives = 10; // Increased to 10
   int score = 0;
   List<MemoryCard> cards = [];
   List<int> flippedIndices = [];
   bool isProcessing = false;
 
-  // The requested list of emojis
   final List<String> allEmojis = [
     '🎵', '🌸', '😊', '🎲', '🐟', 
     '⚽', '❤️', '🔥', '👑', '🐱', 
@@ -1260,20 +1583,18 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
   }
 
   void _setupLevel() {
-    // Level 1: 4 cards (2 pairs), Level 2: 8 cards (4 pairs), Level 3+: 16 cards (8 pairs)
     int cardCount = (level == 1) ? 4 : (level == 2) ? 8 : 16;
     
-    // Shuffle the master list so they get different emojis every time
     List<String> currentLevelEmojis = List.from(allEmojis)..shuffle();
     
     cards.clear();
     for (int i = 0; i < cardCount / 2; i++) {
       String selectedEmoji = currentLevelEmojis[i];
       cards.add(MemoryCard(emoji: selectedEmoji));
-      cards.add(MemoryCard(emoji: selectedEmoji)); // Duplicate for the matching pair
+      cards.add(MemoryCard(emoji: selectedEmoji)); 
     }
     cards.shuffle();
-    lives = 5; // Reset lives per level
+    lives = 10; // Refill 10 stars
     flippedIndices.clear();
     setState(() {});
   }
@@ -1297,10 +1618,9 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
     int idx2 = flippedIndices[1];
 
     if (cards[idx1].emoji == cards[idx2].emoji) {
-      // Match found
       await Future.delayed(const Duration(milliseconds: 500));
       
-      int earnedPoints = 10 * level; // Calculate the points earned
+      int earnedPoints = 10 * level; 
       
       setState(() {
         cards[idx1].isMatched = true;
@@ -1308,7 +1628,6 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
         score += earnedPoints; 
       });
       
-      // --- NEW: RECORD GAME ACTIVITY ---
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString('sqlite_user_id') ?? "";
       if (userId.isNotEmpty) {
@@ -1317,7 +1636,6 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
 
       _checkLevelComplete();
     } else {
-      // No match
       await Future.delayed(const Duration(seconds: 1));
       setState(() {
         cards[idx1].isFlipped = false;
@@ -1350,7 +1668,7 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); 
               setState(() {
                 level = 1;
                 score = 0;
@@ -1362,7 +1680,7 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.pop(context); // Back to dashboard
+              Navigator.pop(context); 
             },
             child: const Text('Exit'),
           )
@@ -1387,14 +1705,16 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
       ),
       body: Column(
         children: [
+          // 10 Lives Display with Wrap
           Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(5, (index) => Icon(
+            padding: const EdgeInsets.all(12.0),
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 4,
+              children: List.generate(10, (index) => Icon(
                 index < lives ? Icons.star : Icons.star_border,
                 color: Colors.amber,
-                size: 40,
+                size: 32,
               )),
             ),
           ),
@@ -1402,20 +1722,19 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
             child: GridView.builder(
               padding: const EdgeInsets.all(16),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: level >= 3 ? 4 : 2, // Scales grid based on level
+                crossAxisCount: level >= 3 ? 4 : 2, 
                 crossAxisSpacing: 10,
                 mainAxisSpacing: 10,
               ),
               itemCount: cards.length,
               itemBuilder: (context, index) {
-                if (cards[index].isMatched) return const SizedBox.shrink(); // Disappear if matched
+                if (cards[index].isMatched) return const SizedBox.shrink(); 
                 
                 return GestureDetector(
                   onTap: () => _onCardTap(index),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 300),
                     decoration: BoxDecoration(
-                      // White background when flipped, Teal when hidden
                       color: cards[index].isFlipped ? Colors.white : Colors.teal.shade300,
                       borderRadius: BorderRadius.circular(15),
                       border: cards[index].isFlipped 
@@ -1429,7 +1748,7 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
                       child: cards[index].isFlipped
                           ? Text(
                               cards[index].emoji,
-                              style: TextStyle(fontSize: level >= 3 ? 40 : 60), // Scales emoji size based on grid
+                              style: TextStyle(fontSize: level >= 3 ? 40 : 60), 
                             )
                           : const Icon(
                               Icons.help_outline, 
@@ -2324,6 +2643,474 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 }
 
 
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+//////               REMINDERS                    //////
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+class RemindersSelectionScreen extends StatelessWidget {
+  const RemindersSelectionScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Reminders'),
+        elevation: 0,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            tileColor: Colors.white,
+            leading: const Icon(Icons.medication, color: Colors.redAccent, size: 40),
+            title: const Text('Medicine', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            subtitle: const Text('Daily medicine tracker'),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MedicineScreen())),
+          ),
+          const SizedBox(height: 12),
+          ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            tileColor: Colors.white,
+            leading: const Icon(Icons.medical_information, color: Colors.blue, size: 40),
+            title: const Text('Doctor Appointments', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            subtitle: const Text('Upcoming checkups and visits'),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DoctorAppointmentScreen())),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- MEDICINE SCREEN & LOGIC ---
+
+class MedicineItem {
+  String id;
+  String name;
+  String time;
+  bool isChecked;
+  String lastCheckedDate;
+
+  MedicineItem({required this.id, required this.name, required this.time, this.isChecked = false, this.lastCheckedDate = ''});
+
+  Map<String, dynamic> toJson() => {
+    'id': id, 'name': name, 'time': time, 'isChecked': isChecked, 'lastCheckedDate': lastCheckedDate,
+  };
+
+  factory MedicineItem.fromJson(Map<String, dynamic> json) => MedicineItem(
+    id: json['id'], name: json['name'], time: json['time'], isChecked: json['isChecked'], lastCheckedDate: json['lastCheckedDate'] ?? '',
+  );
+}
+
+class MedicineScreen extends StatefulWidget {
+  const MedicineScreen({super.key});
+
+  @override
+  State<MedicineScreen> createState() => _MedicineScreenState();
+}
+
+class _MedicineScreenState extends State<MedicineScreen> {
+  List<MedicineItem> medicines = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMedicines();
+  }
+
+  Future<void> _loadMedicines() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? medsJson = prefs.getString('medicine_list');
+    
+    DateTime now = DateTime.now();
+    String todayStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+    if (medsJson != null) {
+      List<dynamic> decoded = jsonDecode(medsJson);
+      medicines = decoded.map((item) => MedicineItem.fromJson(item)).toList();
+      
+      // Reset checkboxes if the day has changed
+      for (var med in medicines) {
+        if (med.lastCheckedDate != todayStr) {
+          med.isChecked = false;
+        }
+      }
+    }
+    setState(() => isLoading = false);
+  }
+
+  Future<void> _saveMedicines() async {
+    final prefs = await SharedPreferences.getInstance();
+    List<Map<String, dynamic>> jsonList = medicines.map((m) => m.toJson()).toList();
+    await prefs.setString('medicine_list', jsonEncode(jsonList));
+  }
+
+  void _showMedicineDialog({MedicineItem? existingMed, int? index}) {
+    TextEditingController nameController = TextEditingController(text: existingMed?.name ?? '');
+    TimeOfDay selectedTime = TimeOfDay.now();
+    String timeString = existingMed?.time ?? '';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(existingMed == null ? 'Add Medicine' : 'Edit Medicine'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Medicine Name', border: OutlineInputBorder()),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.access_time, color: Colors.teal),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(timeString.isEmpty ? 'Select Time' : timeString, style: const TextStyle(fontSize: 16)),
+                      ),
+                      ElevatedButton(
+                        onPressed: () async {
+                          final TimeOfDay? time = await showTimePicker(context: context, initialTime: selectedTime);
+                          if (time != null) {
+                            setDialogState(() {
+                              selectedTime = time;
+                              // Formatting time to AM/PM string
+                              timeString = time.format(context);
+                            });
+                          }
+                        },
+                        child: const Text('Pick Time'),
+                      )
+                    ],
+                  )
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+                  onPressed: () {
+                    if (nameController.text.trim().isNotEmpty && timeString.isNotEmpty) {
+                      setState(() {
+                        if (existingMed == null) {
+                          medicines.add(MedicineItem(id: DateTime.now().millisecondsSinceEpoch.toString(), name: nameController.text.trim(), time: timeString));
+                        } else {
+                          medicines[index!].name = nameController.text.trim();
+                          medicines[index].time = timeString;
+                        }
+                      });
+                      _saveMedicines();
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Save'),
+                )
+              ],
+            );
+          }
+        );
+      },
+    );
+  }
+
+  void _toggleMedication(int index) {
+    setState(() {
+      medicines[index].isChecked = !medicines[index].isChecked;
+      if (medicines[index].isChecked) {
+        DateTime now = DateTime.now();
+        medicines[index].lastCheckedDate = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+      } else {
+        medicines[index].lastCheckedDate = '';
+      }
+    });
+    _saveMedicines();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Medicine Chart'), centerTitle: true),
+      body: medicines.isEmpty 
+          ? const Center(child: Text('No medicines added yet.', style: TextStyle(color: Colors.grey, fontSize: 18)))
+          : Column(
+              children: [
+                // Table Header
+                Container(
+                  color: Colors.teal.shade100,
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  child: const Row(
+                    children: [
+                      Expanded(flex: 3, child: Text('Medicine Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+                      Expanded(flex: 2, child: Text('Time', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+                      SizedBox(width: 48), // Space for edit icon
+                      SizedBox(width: 48), // Space for checkbox
+                    ],
+                  ),
+                ),
+                // Table Rows
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: medicines.length,
+                    itemBuilder: (context, index) {
+                      final med = medicines[index];
+                      return Card(
+                        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                          child: Row(
+                            children: [
+                              Expanded(flex: 3, child: Text(med.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500))),
+                              Expanded(flex: 2, child: Text(med.time, style: const TextStyle(fontSize: 16))),
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.blueGrey),
+                                onPressed: () => _showMedicineDialog(existingMed: med, index: index),
+                              ),
+                              Checkbox(
+                                value: med.isChecked,
+                                activeColor: Colors.green,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                onChanged: (bool? value) => _toggleMedication(index),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: Colors.teal,
+        onPressed: () => _showMedicineDialog(),
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+    );
+  }
+}
+
+// --- DOCTOR APPOINTMENTS SCREEN & LOGIC ---
+
+class DoctorAppointment {
+  String id;
+  String name;
+  String dateTimeStr;
+
+  DoctorAppointment({required this.id, required this.name, required this.dateTimeStr});
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'dateTimeStr': dateTimeStr};
+  factory DoctorAppointment.fromJson(Map<String, dynamic> json) => DoctorAppointment(id: json['id'], name: json['name'], dateTimeStr: json['dateTimeStr']);
+}
+
+class DoctorAppointmentScreen extends StatefulWidget {
+  const DoctorAppointmentScreen({super.key});
+
+  @override
+  State<DoctorAppointmentScreen> createState() => _DoctorAppointmentScreenState();
+}
+
+class _DoctorAppointmentScreenState extends State<DoctorAppointmentScreen> {
+  List<DoctorAppointment> appointments = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAppointments();
+  }
+
+  Future<void> _loadAppointments() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? apptsJson = prefs.getString('appointment_list');
+    if (apptsJson != null) {
+      List<dynamic> decoded = jsonDecode(apptsJson);
+      appointments = decoded.map((item) => DoctorAppointment.fromJson(item)).toList();
+    }
+    setState(() => isLoading = false);
+  }
+
+  Future<void> _saveAppointments() async {
+    final prefs = await SharedPreferences.getInstance();
+    List<Map<String, dynamic>> jsonList = appointments.map((a) => a.toJson()).toList();
+    await prefs.setString('appointment_list', jsonEncode(jsonList));
+  }
+
+  void _showAppointmentDialog({DoctorAppointment? existingAppt, int? index}) {
+    TextEditingController nameController = TextEditingController(text: existingAppt?.name ?? '');
+    DateTime selectedDate = DateTime.now();
+    TimeOfDay selectedTime = TimeOfDay.now();
+    String combinedDateTime = existingAppt?.dateTimeStr ?? '';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(existingAppt == null ? 'Add Appointment' : 'Edit Appointment'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Doctor / Clinic Name', border: OutlineInputBorder()),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.calendar_month, color: Colors.blue),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(combinedDateTime.isEmpty ? 'Select Date & Time' : combinedDateTime, style: const TextStyle(fontSize: 14)),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_calendar, color: Colors.blue),
+                        onPressed: () async {
+                          final DateTime? date = await showDatePicker(context: context, initialDate: selectedDate, firstDate: DateTime.now(), lastDate: DateTime(2030));
+                          if (date != null) {
+                            if (!context.mounted) return;
+                            final TimeOfDay? time = await showTimePicker(context: context, initialTime: selectedTime);
+                            if (time != null) {
+                              setDialogState(() {
+                                selectedDate = date;
+                                selectedTime = time;
+                                String formattedDate = "${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}";
+                                combinedDateTime = "$formattedDate, ${time.format(context)}";
+                              });
+                            }
+                          }
+                        },
+                      )
+                    ],
+                  )
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                  onPressed: () {
+                    if (nameController.text.trim().isNotEmpty && combinedDateTime.isNotEmpty) {
+                      setState(() {
+                        if (existingAppt == null) {
+                          appointments.add(DoctorAppointment(id: DateTime.now().millisecondsSinceEpoch.toString(), name: nameController.text.trim(), dateTimeStr: combinedDateTime));
+                        } else {
+                          appointments[index!].name = nameController.text.trim();
+                          appointments[index].dateTimeStr = combinedDateTime;
+                        }
+                      });
+                      _saveAppointments();
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Save'),
+                )
+              ],
+            );
+          }
+        );
+      },
+    );
+  }
+
+  void _completeAppointment(int index) {
+    setState(() {
+      appointments.removeAt(index);
+    });
+    _saveAppointments();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Appointment completed and removed.'), backgroundColor: Colors.green),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Doctor Appointments'), centerTitle: true),
+      body: appointments.isEmpty 
+          ? const Center(child: Text('No upcoming appointments.', style: TextStyle(color: Colors.grey, fontSize: 18)))
+          : Column(
+              children: [
+                // Table Header
+                Container(
+                  color: Colors.blue.shade100,
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  child: const Row(
+                    children: [
+                      Expanded(flex: 3, child: Text('Doctor/Clinic', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+                      Expanded(flex: 3, child: Text('Date & Time', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+                      SizedBox(width: 40), // Edit icon
+                      SizedBox(width: 48), // Checkbox
+                    ],
+                  ),
+                ),
+                // Table Rows
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: appointments.length,
+                    itemBuilder: (context, index) {
+                      final appt = appointments[index];
+                      return Card(
+                        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                          child: Row(
+                            children: [
+                              Expanded(flex: 3, child: Text(appt.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500))),
+                              Expanded(flex: 3, child: Text(appt.dateTimeStr, style: const TextStyle(fontSize: 14))),
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.blueGrey, size: 20),
+                                onPressed: () => _showAppointmentDialog(existingAppt: appt, index: index),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                              const SizedBox(width: 12),
+                              Checkbox(
+                                value: false,
+                                activeColor: Colors.green,
+                                shape: const CircleBorder(), // Distinguishes it from medicine checkbox
+                                onChanged: (bool? value) {
+                                  if (value == true) {
+                                    _completeAppointment(index);
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: Colors.blue,
+        onPressed: () => _showAppointmentDialog(),
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+    );
+  }
+}
+
 ///////////////////////////////////////////////////
 ///////////////////////////////////////////////////
 ///
@@ -2344,19 +3131,17 @@ class AccountScreen extends StatefulWidget {
 }
 
 class _AccountScreenState extends State<AccountScreen> {
-  // Mock Data (Later, this will be fetched from your Log-in Form / Local Storage)
+  String registrationNumber = "Loading...";
   String name = "Loading...";
   String email = "Loading...";
   String phone = "Loading...";
   String address = "Loading...";
   Uint8List? profilePhotoBytes;
   
-  // High Scores
-  final int highestStreak = 14;
-  final int highestScore = 4250;
+  // Changed from 'final' to dynamic integers so they can update from the DB
+  int highestStreak = 0;
+  int highestScore = 0;
   
-  // Photo placeholder (Replace with FileImage when linking real uploads)
-  final String? profilePhotoPath = null; 
   @override
   void initState() {
     super.initState();
@@ -2366,21 +3151,55 @@ class _AccountScreenState extends State<AccountScreen> {
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
     
+    // 1. Fetch SQLite Data for Scores
+    final String userId = prefs.getString('sqlite_user_id') ?? "";
+    int dbCumulativeScore = 0;
+    int dbCurrentStreak = 0;
+
+    if (userId.isNotEmpty) {
+      final dbHelper = DatabaseHelper.instance;
+      final patients = await dbHelper.getAllPatients();
+      
+      // Find the logged-in patient in the database
+      final patient = patients.firstWhere(
+        (p) => p['user_id'] == userId,
+        orElse: () => {},
+      );
+
+      if (patient.isNotEmpty) {
+        dbCumulativeScore = patient['cumulative_score'] as int? ?? 0;
+        dbCurrentStreak = patient['current_streak'] as int? ?? 0;
+      }
+    }
+
+    // 2. Calculate All-Time Highest Streak
+    // Since current_streak resets when a day is missed, we save the historical highest
+    int savedHighestStreak = prefs.getInt('highest_historical_streak') ?? 0;
+    if (dbCurrentStreak > savedHighestStreak) {
+      savedHighestStreak = dbCurrentStreak;
+      await prefs.setInt('highest_historical_streak', savedHighestStreak);
+    }
+    
     setState(() {
-      // Pull the real data, or use defaults if they skipped registration
+      // Load SharedPreferences text data
+      registrationNumber = prefs.getString('user_registration_number') ?? "Not Assigned";
       name = prefs.getString('user_name') ?? "Guest User";
       email = prefs.getString('user_email') ?? "No email provided";
       phone = prefs.getString('user_phone') ?? "No phone provided";
       address = prefs.getString('user_address') ?? "No address provided";
       
-      // Load and decode the Base64 image string back into a real image
+      // Set the dynamic score values
+      highestScore = dbCumulativeScore; // Cumulative score acts as the all-time high
+      highestStreak = savedHighestStreak; 
+
+      // Load Profile Photo
       String? savedPhotoString = prefs.getString('user_photo');
       if (savedPhotoString != null) {
         profilePhotoBytes = base64Decode(savedPhotoString);
       }
     });
   }
-  // --- EDIT DIALOG LOGIC ---
+
   void _editField(String title, String currentValue, Function(String) onSave) {
     TextEditingController controller = TextEditingController(text: currentValue);
 
@@ -2417,18 +3236,42 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
+  Future<void> _logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('sqlite_user_id');
+    await prefs.remove('user_registration_number');
+    await prefs.remove('user_name');
+    await prefs.remove('user_email');
+    await prefs.remove('user_phone');
+    await prefs.remove('user_role');
+    
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        (Route<dynamic> route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Account'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _logout,
+            tooltip: 'Log Out',
+          )
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // --- PROFILE PHOTO ---
             const SizedBox(height: 20),
             Center(
               child: Stack(
@@ -2448,7 +3291,6 @@ class _AccountScreenState extends State<AccountScreen> {
             ),
             const SizedBox(height: 30),
 
-            // --- PERSONAL DETAILS CARD ---
             Card(
               elevation: 3,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -2456,7 +3298,14 @@ class _AccountScreenState extends State<AccountScreen> {
                 padding: const EdgeInsets.all(8.0),
                 child: Column(
                   children: [
-                    // Editable Name
+                    ListTile(
+                      leading: const Icon(Icons.pin, color: Colors.teal),
+                      title: const Text('Registration Number', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      subtitle: Text(registrationNumber, style: const TextStyle(fontSize: 18, color: Colors.black87, fontWeight: FontWeight.bold)),
+                      trailing: const Icon(Icons.lock_outline, color: Colors.grey, size: 20),
+                    ),
+                    const Divider(height: 1),
+                    
                     ListTile(
                       leading: const Icon(Icons.badge, color: Colors.teal),
                       title: const Text('Name', style: TextStyle(color: Colors.grey, fontSize: 12)),
@@ -2470,7 +3319,6 @@ class _AccountScreenState extends State<AccountScreen> {
                     ),
                     const Divider(height: 1),
                     
-                    // Locked Email
                     ListTile(
                       leading: const Icon(Icons.email, color: Colors.teal),
                       title: const Text('Email ID', style: TextStyle(color: Colors.grey, fontSize: 12)),
@@ -2479,7 +3327,6 @@ class _AccountScreenState extends State<AccountScreen> {
                     ),
                     const Divider(height: 1),
                     
-                    // Locked Phone
                     ListTile(
                       leading: const Icon(Icons.phone, color: Colors.teal),
                       title: const Text('Phone Number', style: TextStyle(color: Colors.grey, fontSize: 12)),
@@ -2488,7 +3335,6 @@ class _AccountScreenState extends State<AccountScreen> {
                     ),
                     const Divider(height: 1),
                     
-                    // Editable Address
                     ListTile(
                       leading: const Icon(Icons.home, color: Colors.teal),
                       title: const Text('Address', style: TextStyle(color: Colors.grey, fontSize: 12)),
@@ -2507,7 +3353,6 @@ class _AccountScreenState extends State<AccountScreen> {
             
             const SizedBox(height: 20),
 
-            // --- ALL-TIME STATS CARD ---
             const Align(
               alignment: Alignment.centerLeft,
               child: Padding(
@@ -3374,6 +4219,352 @@ class FamilyMemberDetailScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+////////////////////////////////////////////
+////////////////////////////////////////////
+///        CAREGIVER DASHBOARD           ///
+////////////////////////////////////////////
+////////////////////////////////////////////
+
+class CaregiverDashboard extends StatefulWidget {
+  const CaregiverDashboard({super.key});
+
+  @override
+  State<CaregiverDashboard> createState() => _CaregiverDashboardState();
+}
+
+class _CaregiverDashboardState extends State<CaregiverDashboard> {
+  String userName = "Caregiver";
+  String institution = "";
+  String caregiverId = "";
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCaregiverData();
+  }
+
+  Future<void> _loadCaregiverData() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      userName = prefs.getString('user_name') ?? "Caregiver";
+      institution = prefs.getString('user_institution') ?? "Independent";
+      caregiverId = prefs.getString('sqlite_user_id') ?? "";
+    });
+  }
+
+  Future<void> _logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('sqlite_user_id');
+    await prefs.remove('user_registration_number');
+    await prefs.remove('user_name');
+    await prefs.remove('user_email');
+    await prefs.remove('user_phone');
+    await prefs.remove('user_role');
+    await prefs.remove('user_institution');
+    
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const RegistrationScreen()),
+        (Route<dynamic> route) => false,
+      );
+    }
+  }
+
+  void _triggerSync() {
+    SyncService().trySync();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Syncing data with server...'), backgroundColor: Colors.teal),
+    );
+  }
+
+  Future<void> _searchPatient() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+
+    final patient = await DatabaseHelper.instance.searchPatientByRegistration(query);
+    _searchController.clear();
+
+    if (!mounted) return;
+
+    if (patient == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No patient found with that Registration ID.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    // Prepare photo decoding
+    Uint8List? photoBytes;
+    if (patient['photo'] != null && patient['photo'].toString().isNotEmpty) {
+      photoBytes = base64Decode(patient['photo']);
+    }
+
+    // Show Patient Profile Dialog
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Patient Found', textAlign: TextAlign.center, style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 50,
+                backgroundColor: Colors.teal.shade100,
+                backgroundImage: photoBytes != null ? MemoryImage(photoBytes) : null,
+                child: photoBytes == null ? const Icon(Icons.person, size: 50, color: Colors.teal) : null,
+              ),
+              const SizedBox(height: 16),
+              Text(patient['name'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('Age: ${patient['age'] ?? 'N/A'}', style: const TextStyle(fontSize: 16, color: Colors.grey)),
+              Text('ID: ${patient['registration_number']}', style: const TextStyle(fontSize: 16, color: Colors.grey)),
+            ],
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+              onPressed: () async {
+                await DatabaseHelper.instance.linkPatientToCaregiver(caregiverId, patient['user_id']);
+                if (mounted) {
+                  Navigator.pop(dialogContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('${patient['name']} added to your patients.'), backgroundColor: Colors.green),
+                  );
+                }
+              },
+              child: const Text('Add Patient', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Caregiver Portal'),
+        centerTitle: true,
+        backgroundColor: Colors.blueGrey,
+        actions: [
+          IconButton(icon: const Icon(Icons.sync), onPressed: _triggerSync, tooltip: 'Sync Data'),
+          IconButton(icon: const Icon(Icons.logout), onPressed: _logout, tooltip: 'Log Out')
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // --- PATIENT SEARCH BAR ---
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                child: Row(
+                  children: [
+                    const Icon(Icons.search, color: Colors.blueGrey),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: const InputDecoration(hintText: 'Enter Patient Registration No...', border: InputBorder.none),
+                        onSubmitted: (_) => _searchPatient(),
+                      ),
+                    ),
+                    IconButton(icon: const Icon(Icons.arrow_forward, color: Colors.blueGrey), onPressed: _searchPatient),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // --- CAREGIVER WELCOME CARD ---
+            Card(
+              color: Colors.blueGrey.shade50,
+              elevation: 3,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  children: [
+                    const CircleAvatar(radius: 40, backgroundColor: Colors.blueGrey, child: Icon(Icons.medical_services, size: 40, color: Colors.white)),
+                    const SizedBox(height: 12),
+                    Text('Welcome, $userName', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                    const SizedBox(height: 4),
+                    Text(institution, style: const TextStyle(fontSize: 16, color: Colors.grey)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            
+            const Text('Patient Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+            const SizedBox(height: 12),
+
+            // --- CAREGIVER GRID MENU ---
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 1.1,
+              children: [
+                _buildCaregiverCard('My Patients', Icons.group, Colors.indigo, onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const MyPatientsScreen()));
+                }),
+                _buildCaregiverCard('Analytics', Icons.bar_chart, Colors.purple),
+                _buildCaregiverCard('Settings', Icons.settings, Colors.blueGrey),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCaregiverCard(String title, IconData icon, Color color, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap ?? () {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$title module coming soon!')));
+      },
+      child: Card(
+        color: Colors.white,
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: color.withOpacity(0.3), width: 2)),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 50, color: color),
+            const SizedBox(height: 10),
+            Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blueGrey.shade700)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+////////////////////////////////////////////////
+////////////////////////////////////////////////
+///           MY PATIENT SCREEN              ///
+////////////////////////////////////////////////
+////////////////////////////////////////////////
+
+class MyPatientsScreen extends StatefulWidget {
+  const MyPatientsScreen({super.key});
+
+  @override
+  State<MyPatientsScreen> createState() => _MyPatientsScreenState();
+}
+
+class _MyPatientsScreenState extends State<MyPatientsScreen> {
+  List<Map<String, dynamic>> linkedPatients = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLinkedPatients();
+  }
+
+  Future<void> _loadLinkedPatients() async {
+    final prefs = await SharedPreferences.getInstance();
+    final caregiverId = prefs.getString('sqlite_user_id') ?? "";
+
+    if (caregiverId.isNotEmpty) {
+      final patients = await DatabaseHelper.instance.getPatientsForCaregiver(caregiverId);
+      setState(() {
+        linkedPatients = patients;
+      });
+    }
+    setState(() => isLoading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('My Patients'),
+        centerTitle: true,
+        backgroundColor: Colors.indigo,
+      ),
+      body: linkedPatients.isEmpty
+          ? const Center(
+              child: Text(
+                'You have no patients added yet.\nUse the search bar on the dashboard to add them.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+            )
+          : SingleChildScrollView(
+              scrollDirection: Axis.horizontal, // Allows table to scroll left/right on small screens
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Card(
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                    child: DataTable(
+                      headingRowColor: WidgetStateProperty.all(Colors.indigo.shade50),
+                      columnSpacing: 24,
+                      columns: const [
+                        DataColumn(label: Text('Name', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Age', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Daily Score', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Cum. Score', style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataColumn(label: Text('Streak', style: TextStyle(fontWeight: FontWeight.bold))),
+                      ],
+                      rows: linkedPatients.map((patient) {
+                        return DataRow(
+                          cells: [
+                            DataCell(Text(patient['name'].toString(), style: const TextStyle(fontWeight: FontWeight.bold))),
+                            DataCell(Text(patient['age']?.toString() ?? '-')),
+                            DataCell(Text(patient['daily_score']?.toString() ?? '0', style: const TextStyle(color: Colors.green))),
+                            DataCell(Text(patient['cumulative_score']?.toString() ?? '0')),
+                            DataCell(
+                              Row(
+                                children: [
+                                  const Icon(Icons.local_fire_department, color: Colors.orange, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text('${patient['current_streak'] ?? '0'}'),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
     );
   }
 }

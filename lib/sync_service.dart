@@ -1,26 +1,26 @@
-// sync_service.dart
-
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'database_helper.dart';
 
 class SyncService {
-  // Base URL pointing to your backend endpoint
-  static const String _baseUrl = 'http://10.0.2.2:8000'; // Replace with production URL
+  // 10.0.2.2 is the exact IP the Android emulator uses to talk to your laptop's localhost
+  static const String _baseUrl = 'http://10.0.2.2:8000'; 
 
   final _db = DatabaseHelper.instance;
 
   Future<void> trySync() async {
     final List<ConnectivityResult> connectivity = await Connectivity().checkConnectivity();
     
-    // Check if the list contains 'none' or is empty
     if (connectivity.contains(ConnectivityResult.none) || connectivity.isEmpty) {
-      return; // No internet — skip silently
+      return; // No internet, skip silently
     }
 
-    // ORDER MATTERS: Sync patients first, then foreign-key dependent sessions
+    // Sync Users First
     await _syncPatients();
+    // (Note: Caregivers sync logic can be expanded here as they are added to the getUnsynced queries)
+    
+    // Sync Sessions Second (These rely on the users existing in the backend first)
     await _syncGameSessions();
     await _syncMusicSessions();
   }
@@ -62,6 +62,7 @@ class SyncService {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(data),
       );
+      // Returns true if the server accepts the data (200 OK or 201 Created)
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
       return false;

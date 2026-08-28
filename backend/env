@@ -1,0 +1,5 @@
+# Copy this file to .env and fill in the real values.
+# .env itself should NEVER be committed to GitHub — check that
+# .gitignore includes ".env" before pushing.
+
+DATABASE_URL=postgresql://username:password@host:port/cogniner_db
