@@ -395,3 +395,33 @@ Analyze the speech, select the appropriate action, and provide a comforting spok
             action="none",
             spoken_response=fallback_speech
         )
+    
+from gtts import gTTS
+from fastapi.responses import StreamingResponse
+import io
+
+class SpeechRequest(BaseModel):
+    text: str
+
+@app.post("/generate-speech/")
+def generate_speech(request: SpeechRequest):
+    try:
+        # 1. Detect if the text contains Bengali or Hindi characters to set the correct language accent
+        lang = 'en'
+        if re.search(r'[\u0980-\u09FF]', request.text):
+            lang = 'bn'  # Bengali
+        elif re.search(r'[\u0900-\u097F]', request.text):
+            lang = 'hi'  # Hindi
+
+        # 2. Generate audio using gTTS
+        tts = gTTS(text=request.text, lang=lang, slow=False)
+        audio_fp = io.BytesIO()
+        tts.write_to_fp(audio_fp)
+        audio_fp.seek(0)
+
+        # 3. Stream the MP3 audio directly back to the client
+        return StreamingResponse(audio_fp, media_type="audio/mpeg")
+        
+    except Exception as e:
+        print(f"❌ TTS Audio Generation Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

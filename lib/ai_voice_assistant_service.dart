@@ -1,3 +1,4 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -47,22 +48,30 @@ class AiVoiceAssistantService {
     _isSpeechInitialized = await _speech.initialize();
   }
 
- Future<void> speak(String text) async {
-    String ttsLang = 'en-IN'; // Default to English for English text
+ // Instance of AudioPlayer for playing server-generated speech
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
-    // Auto-detect the script of the text itself to dynamically switch voices
-    if (RegExp(r'[\u0980-\u09FF]').hasMatch(text)) {
-      ttsLang = 'bn-IN'; // Bengali script detected
-    } else if (RegExp(r'[\u0900-\u097F]').hasMatch(text)) {
-      ttsLang = 'hi-IN'; // Hindi (Devanagari) script detected
-    } 
+  Future<void> speak(String text) async {
+    if (text.trim().isEmpty) return;
 
-    await _flutterTts.setLanguage(ttsLang);
-    await _flutterTts.speak(text);
-  }
+    try {
+      // 1. Send the text to your FastAPI backend
+      final response = await http.post(
+        Uri.parse('$_baseUrl/generate-speech/'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'text': text}),
+      ).timeout(const Duration(seconds: 10));
 
-  Future<void> stopSpeaking() async {
-    await _flutterTts.stop();
+      if (response.statusCode == 200) {
+        // 2. Play the returned audio bytes directly in the browser/app
+        BytesSource audioSource = BytesSource(response.bodyBytes);
+        await _audioPlayer.play(audioSource);
+      } else {
+        print('--- TTS STREAM ERROR: Server returned ${response.statusCode} ---');
+      }
+    } catch (e) {
+      print('--- TTS CONNECTION ERROR: $e ---');
+    }
   }
 
   Future<void> startListening({
