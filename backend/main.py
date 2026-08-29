@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -6,11 +7,18 @@ from sqlalchemy import or_
 from google import genai
 from dotenv import load_dotenv
 
-load_dotenv()
+current_directory = Path(__file__).resolve().parent
+env_path = current_directory / '.env'
+load_dotenv(dotenv_path=env_path)
 
 import models
 import schemas
 from database import Base, engine, SessionLocal
+
+from pydantic import BaseModel
+import json
+import re
+from google.genai import types
 
 Base.metadata.create_all(bind=engine)
 
@@ -31,6 +39,14 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def get_language_fallback(text: str) -> str:
+    """Detects script in input text and returns localized fallback error response."""
+    if re.search(r'[\u0980-\u09FF]', text):  # Bengali Script
+        return "আমার কানেক্ট করতে সমস্যা হচ্ছে, তবে আমি আপনার সাথেই আছি।"
+    elif re.search(r'[\u0900-\u097F]', text):  # Hindi (Devanagari) Script
+        return "मुझे अभी कनेक्ट करने में थोड़ी परेशानी हो रही है, लेकिन मैं आपके साथ हूँ।"
+    return "I am having trouble connecting right now, but I am right here with you."
 
 @app.get("/")
 def root():
@@ -275,22 +291,107 @@ def analyze_mood(
 
 @app.post("/caregiver-advisor/", response_model=schemas.ChatResponse)
 def caregiver_advisor(request: schemas.ChatRequest):
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    response = client.models.generate_content(
-        model="gemini-3.5-flash",
-        contents=f"You are a compassionate dementia care advisor. The caregiver asks: {request.message}"
-    )
-    return schemas.ChatResponse(reply=response.text)
+    try:
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=f"You are a compassionate dementia care advisor. The caregiver asks: {request.message}"
+        )
+        return schemas.ChatResponse(reply=response.text)
+    except Exception as e:
+        print(f"❌ Caregiver Advisor API Error: {e}")
+        return schemas.ChatResponse(
+            reply="The AI advisor service is currently experiencing high demand or rate limits. Please try again in a moment."
+        )
 
 @app.post("/patient-chat/", response_model=schemas.ChatResponse)
 def patient_chat(request: schemas.ChatRequest):
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    response = client.models.generate_content(
-        model="gemini-3.5-flash",
-        contents=(
-            "You are a warm, gentle, and comforting daily companion for an elderly person "
-            "with cognitive needs. Keep your answers very short, simple, reassuring, "
-            "and friendly. The user says: " + request.message
+    try:
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=(
+                "You are a warm, gentle, and comforting daily companion for an elderly person "
+                "with cognitive needs. Keep your answers very short, simple, reassuring, "
+                "and friendly. The user says: " + request.message
+            )
         )
-    )
-    return schemas.ChatResponse(reply=response.text)
+        return schemas.ChatResponse(reply=response.text)
+    except Exception as e:
+        print(f"❌ Patient Chat API Error: {e}")
+        fallback_reply = get_language_fallback(request.message)
+        return schemas.ChatResponse(reply=fallback_reply)
+
+# --- VOICE ASSISTANT ---
+
+class VoiceAssistantRequest(BaseModel):
+    message: str
+
+class VoiceAssistantResponse(BaseModel):
+    action: str
+    spoken_response: str
+
+@app.post("/voice-assistant/", response_model=VoiceAssistantResponse)
+def voice_assistant(request: VoiceAssistantRequest):
+    try:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            print("❌ ERROR: GEMINI_API_KEY not found! Check your .env file.")
+            raise ValueError("API Key Missing")
+
+        client = genai.Client(api_key=api_key)
+        
+        # PROMPT FIX: Strictly force native Unicode scripts so the Flutter regex catches it.
+        prompt = f"""
+You are a warm, gentle, and empathetic AI voice companion inside a Dementia & Cognitive Care mobile app.
+
+CRITICAL RULES FOR LANGUAGE & SCRIPT:
+1. You MUST write the 'spoken_response' in the EXACT SAME LANGUAGE the user used.
+2. NATIVE SCRIPT ONLY: If the user speaks Bengali or Hindi (even if they typed in English letters like "kemon acho" or "kaise ho"), you MUST reply using the NATIVE SCRIPT (Bengali: বাংলা লিপি, Hindi: देवनागरी). 
+3. NEVER use Romanized English letters for Indian languages. Our Text-to-Speech engine will fail if you do not use native Unicode characters.
+
+Available App Actions:
+- "start_memory_game"
+- "start_pattern_game"
+- "start_song_game"
+- "start_photo_game"
+- "open_routine"
+- "open_music"
+- "open_family"
+- "open_reminders"
+- "none"
+
+User speech: "{request.message}"
+
+Analyze the speech, select the appropriate action, and provide a comforting spoken response strictly following the script rules above.
+"""
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=VoiceAssistantResponse,
+                temperature=0.3,
+            )
+        )
+        
+        data = json.loads(response.text)
+        
+        return VoiceAssistantResponse(
+            action=data.get("action", "none"),
+            spoken_response=data.get("spoken_response", "I am here with you.")
+        )
+        
+    except Exception as e:
+        print(f"\n--- 🔴 AI ERROR 🔴 ---")
+        print(f"Failed to process speech: {request.message}")
+        print(f"Error Details: {e}")
+        print(f"----------------------\n")
+        
+        # Localized fallback based on user's input language script
+        fallback_speech = get_language_fallback(request.message)
+        
+        return VoiceAssistantResponse(
+            action="none",
+            spoken_response=fallback_speech
+        )

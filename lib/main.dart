@@ -21,6 +21,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'ai_voice_assistant_service.dart';
+
 
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
 final ValueNotifier<double> textScaleNotifier = ValueNotifier(1.0);
@@ -31,7 +33,7 @@ void main() async {
 
   await NotificationService.instance.init();
   await NotificationService.instance.scheduleHourlyHydrationReminder();
-  await VoiceAssistantService.instance.init();
+  await AiVoiceAssistantService.instance.init();
   
   final dbHelper = DatabaseHelper.instance;
   await dbHelper.database; 
@@ -687,73 +689,77 @@ class _PatientDashboardState extends State<PatientDashboard> {
   // --- NEW: VOICE ASSISTANT LOGIC ---
   void _listenForVoiceCommand() async {
     if (isListening) {
-      await VoiceAssistantService.instance.stopListening();
+      await AiVoiceAssistantService.instance.stopListening();
       setState(() => isListening = false);
       return;
     }
 
-    await VoiceAssistantService.instance.startListening(
+    await AiVoiceAssistantService.instance.startListening(
       onListeningStatusChanged: (status) {
         setState(() => isListening = status);
       },
       onResult: (text) {
         setState(() => recognizedText = text);
-        if (!isListening) { 
-          // Process when listening stops naturally
-          _handleVoiceIntent(text);
+        if (!isListening) {
+          _processWithAi(text);
         }
       },
     );
   }
 
-  void _handleVoiceIntent(String text) async {
-    if (text.isEmpty) return;
+  Future<void> _processWithAi(String text) async {
+    if (text.trim().isEmpty) return;
 
-    final intent = VoiceAssistantService.instance.parseIntent(text);
+    // Call LLM for context, reasoning, and localized verbal output
+    final AiVoiceResponse aiResult = await AiVoiceAssistantService.instance.processUserSpeech(text);
 
-    switch (intent) {
+    // Speak empathetic response
+    await AiVoiceAssistantService.instance.speak(aiResult.spokenResponse);
+
+    if (!mounted) return;
+
+    // Handle dynamic navigation based on AI classification
+    switch (aiResult.action) {
       case 'start_memory_game':
-        await VoiceAssistantService.instance.speak("Starting memory game.");
-        if (!mounted) return;
         Navigator.push(context, MaterialPageRoute(builder: (_) => const MemoryGameScreen()))
             .then((_) => _loadDashboardData());
         break;
 
       case 'start_pattern_game':
-        await VoiceAssistantService.instance.speak("Starting pattern game.");
-        if (!mounted) return;
         Navigator.push(context, MaterialPageRoute(builder: (_) => const PatternRecognitionScreen()))
             .then((_) => _loadDashboardData());
         break;
 
-      case 'start_task_sequencer':
-        await VoiceAssistantService.instance.speak("Starting daily task sequencer.");
-        if (!mounted) return;
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const DailyTaskSequencerGame()))
+      case 'start_song_game':
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const SongRecognitionScreen()))
             .then((_) => _loadDashboardData());
         break;
 
-      case 'open_music':
-        await VoiceAssistantService.instance.speak("Opening music therapy.");
-        if (!mounted) return;
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const MusicLibraryScreen()));
+      case 'start_photo_game':
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const PhotoRecognitionScreen()))
+            .then((_) => _loadDashboardData());
         break;
 
       case 'open_routine':
-        await VoiceAssistantService.instance.speak("Opening daily routine.");
-        if (!mounted) return;
         Navigator.push(context, MaterialPageRoute(builder: (_) => const DailyRoutineScreen()))
             .then((_) => _loadDashboardData());
         break;
 
+      case 'open_music':
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const MusicLibraryScreen()));
+        break;
+
       case 'open_family':
-        await VoiceAssistantService.instance.speak("Opening family gallery.");
-        if (!mounted) return;
         Navigator.push(context, MaterialPageRoute(builder: (_) => const FamilyScreen()));
         break;
 
+      case 'open_reminders':
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const RemindersSelectionScreen()));
+        break;
+
+      case 'none':
       default:
-        await VoiceAssistantService.instance.speak("I didn't quite catch that. Try saying 'Start a game' or 'Play music'.");
+        // No screen change needed; the assistant already provided comfort/answers verbally
         break;
     }
   }
