@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250" fill="none">
+  <!-- Sangai Deer silhouette -->
+  <!-- Head -->
+  <path d="M120 100 Q115 88 118 78 Q122 70 128 72 Q134 70 138 78 Q140 88 135 100" 
+        stroke="currentColor" stroke-width="2.5" fill="currentColor" fill-opacity="0.1"/>
+  <!-- Antlers - branching -->
+  <path d="M122 78 Q115 60 108 48 Q105 42 110 50" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M115 62 Q108 52 102 48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <path d="M112 55 Q108 45 112 38" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <path d="M135 78 Q142 60 150 50 Q153 44 148 52" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M145 65 Q152 55 158 50" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <path d="M150 58 Q155 48 152 42" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <!-- Eye -->
+  <circle cx="128" cy="82" r="2.5" fill="currentColor"/>
+  
+  <!-- Neck -->
+  <path d="M118 100 Q112 115 108 130" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <path d="M138 100 Q142 115 145 130" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  
+  <!-- Body -->
+  <path d="M108 130 Q100 145 95 160 Q92 172 100 178 Q120 188 150 190 Q180 188 195 178 Q200 172 198 160 Q195 145 185 130" 
+        stroke="currentColor" stroke-width="2.5" fill="currentColor" fill-opacity="0.1"/>
+  
+  <!-- Legs -->
+  <path d="M110 178 L105 210 L112 210" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M125 182 L122 210 L128 210" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M165 182 L168 210 L162 210" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M185 178 L190 210 L184 210" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  
+  <!-- Tail -->
+  <path d="M195 160 Q205 155 210 160 Q208 165 200 162" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="currentColor" fill-opacity="0.06"/>
+  
+  <!-- Loktak Lake water ripples -->
+  <path d="M30 220 Q80 210 150 218 Q220 225 280 215" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  <path d="M20 232 Q90 222 160 230 Q230 236 290 228" stroke="currentColor" stroke-width="1.2" fill="none"/>
+  <path d="M40 242 Q100 234 170 240 Q240 244 270 238" stroke="currentColor" stroke-width="1" fill="none"/>
+  
+  <!-- Phumdi (floating vegetation islands) -->
+  <ellipse cx="80" cy="215" rx="25" ry="6" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.08"/>
+  <ellipse cx="200" cy="222" rx="30" ry="5" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.08"/>
+  <!-- Small plants on phumdi -->
+  <path d="M75 210 L73 200 M85 209 L87 199 M78 208 L76 200" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+  <path d="M195 218 L193 208 M205 217 L207 207 M200 216 L199 208" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+  
+  <!-- Lotus petals scattered -->
+  <path d="M40 195 Q48 185 56 195 Q48 198 40 195Z" stroke="currentColor" stroke-width="1.2" fill="currentColor" fill-opacity="0.06"/>
+  <path d="M240 200 Q248 190 256 200 Q248 203 240 200Z" stroke="currentColor" stroke-width="1.2" fill="currentColor" fill-opacity="0.06"/>
+</svg>

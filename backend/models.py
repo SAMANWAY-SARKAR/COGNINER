@@ -51,6 +51,7 @@ class Patient(Base):
     caregivers = relationship("Caregiver", secondary=caregiver_patients, back_populates="patients")
     game_sessions = relationship("GameSession", back_populates="patient", cascade="all, delete-orphan")
     music_sessions = relationship("MusicSession", back_populates="patient", cascade="all, delete-orphan")
+    regional_music_plays = relationship("RegionalMusicPlay", back_populates="patient", cascade="all, delete-orphan")
 
 class GameSession(Base):
     __tablename__ = "game_sessions"
@@ -75,3 +76,20 @@ class MusicSession(Base):
     timestamp = Column(DateTime, server_default=func.now())
 
     patient = relationship("Patient", back_populates="music_sessions")
+
+
+class RegionalMusicPlay(Base):
+    __tablename__ = "regional_music_plays"
+
+    play_id = Column(UUID_TYPE, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(UUID_TYPE, ForeignKey("patients.user_id", ondelete="CASCADE"))
+    state_name = Column(String(50), nullable=False)
+    song_title = Column(String(200), nullable=False)
+    duration_seconds = Column(Integer, default=0)
+    loop_count = Column(Integer, default=0)
+    emotional_state = Column(String(100), nullable=True)
+    cognitive_response = Column(String(300), nullable=True)
+    timestamp = Column(DateTime, server_default=func.now())
+    synced = Column(Integer, default=1)
+
+    patient = relationship("Patient", back_populates="regional_music_plays")

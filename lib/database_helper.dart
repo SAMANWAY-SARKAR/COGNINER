@@ -15,6 +15,7 @@ class DatabaseHelper {
   final List<Map<String, dynamic>> _webCaregiverPatients = [];
   final List<Map<String, dynamic>> _webGameSessions = [];
   final List<Map<String, dynamic>> _webMusicSessions = [];
+  final List<Map<String, dynamic>> _webRegionalMusicPlays = [];
 
   Future<sqlite.Database?> get database async {
     if (kIsWeb) return null;
@@ -333,7 +334,7 @@ class DatabaseHelper {
 
   Future<void> markMusicSessionSynced(String sessionId) async {
     if (kIsWeb) { final idx = _webMusicSessions.indexWhere((s) => s['session_id'] == sessionId); if (idx != -1) _webMusicSessions[idx]['synced'] = 1; return; }
-    final db = await database; await db!.update('music_sessions', {'synced': 1}, where: 'synced = ?', whereArgs: [sessionId]);
+    final db = await database; await db!.update('music_sessions', {'synced': 1}, where: 'session_id = ?', whereArgs: [sessionId]);
   }
 
   // --- REGIONAL MUSIC PLAYS ---
@@ -358,18 +359,18 @@ class DatabaseHelper {
       'cognitive_response': cognitiveResponse,
       'synced': 0,
     };
-    if (kIsWeb) { _webMusicSessions.add(data); return; }
+    if (kIsWeb) { _webRegionalMusicPlays.add(data); return; }
     final db = await database; await db!.insert('regional_music_plays', data);
   }
 
   Future<List<Map<String, dynamic>>> getRegionalMusicPlays(String userId) async {
-    if (kIsWeb) return _webMusicSessions.where((s) => s['user_id'] == userId).toList();
+    if (kIsWeb) return _webRegionalMusicPlays.where((s) => s['user_id'] == userId).toList();
     final db = await database;
     return await db!.query('regional_music_plays', where: 'user_id = ?', whereArgs: [userId], orderBy: 'timestamp DESC');
   }
 
   Future<List<Map<String, dynamic>>> getRegionalMusicPlaysByState(String userId, String stateName) async {
-    if (kIsWeb) return _webMusicSessions.where((s) => s['user_id'] == userId && s['state_name'] == stateName).toList();
+    if (kIsWeb) return _webRegionalMusicPlays.where((s) => s['user_id'] == userId && s['state_name'] == stateName).toList();
     final db = await database;
     return await db!.query('regional_music_plays',
       where: 'user_id = ? AND state_name = ?',
@@ -408,5 +409,16 @@ class DatabaseHelper {
       'state_durations': stateDurations,
       'state_loops': stateLoops,
     };
+  }
+
+  // --- REGIONAL MUSIC PLAYS SYNC SUPPORT ---
+  Future<List<Map<String, dynamic>>> getUnsyncedRegionalMusicPlays() async {
+    if (kIsWeb) return _webRegionalMusicPlays.where((p) => p['synced'] == 0).toList();
+    final db = await database; return await db!.query('regional_music_plays', where: 'synced = 0');
+  }
+
+  Future<void> markRegionalMusicPlaySynced(String playId) async {
+    if (kIsWeb) { final idx = _webRegionalMusicPlays.indexWhere((p) => p['play_id'] == playId); if (idx != -1) _webRegionalMusicPlays[idx]['synced'] = 1; return; }
+    final db = await database; await db!.update('regional_music_plays', {'synced': 1}, where: 'play_id = ?', whereArgs: [playId]);
   }
 }

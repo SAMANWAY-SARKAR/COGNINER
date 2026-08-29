@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250" fill="none">
+  <!-- One-Horned Rhinoceros silhouette - hand-drawn style -->
+  <path d="M60 180 Q62 160 68 145 L72 130 L78 120 L82 128 L88 115 Q95 105 105 108 Q120 102 135 98 Q155 88 175 82 Q200 75 220 78 Q245 82 258 92 L262 105 L258 120 L250 135 L248 145 L240 155 L232 148 L225 155 L218 148 L210 155 L195 155 L188 148 L180 155 L172 148 L165 155 L130 155 L122 148 L115 155 L100 155 L92 148 L85 155 L70 158 Z" 
+        stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="currentColor" fill-opacity="0.15"/>
+  <!-- Horn -->
+  <path d="M72 130 L68 108 L76 118" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <!-- Eye -->
+  <circle cx="90" cy="118" r="3" fill="currentColor"/>
+  <!-- Ear -->
+  <path d="M100 105 Q105 92 112 100" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  
+  <!-- Tea leaves scattered -->
+  <path d="M265 130 Q275 118 285 130 Q275 135 265 130Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M270 148 Q280 136 290 148 Q280 153 270 148Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M275 165 Q285 153 295 165 Q285 170 275 165Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M260 155 Q270 143 280 155 Q270 160 260 155Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  
+  <!-- Jaapi hat above rhino -->
+  <path d="M130 60 Q145 42 160 38 Q175 42 190 60 L185 65 Q170 50 160 48 Q150 50 135 65Z" 
+        stroke="currentColor" stroke-width="2" fill="currentColor" fill-opacity="0.08"/>
+  <line x1="160" y1="40" x2="160" y2="62" stroke="currentColor" stroke-width="1.2"/>
+  <line x1="142" y1="54" x2="178" y2="54" stroke="currentColor" stroke-width="1.2"/>
+</svg>

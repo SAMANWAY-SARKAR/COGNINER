@@ -12,9 +12,11 @@ import 'package:image_picker/image_picker.dart';
 import 'database_helper.dart'; 
 import 'score.dart'; 
 import 'sync_service.dart'; 
+import 'regional_theme.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -81,31 +83,34 @@ class DementiaCareApp extends StatelessWidget {
               initialScreen = const PatientDashboard();
             }
 
-            return MaterialApp(
-              title: 'Cognitive Care',
-              localizationsDelegates: context.localizationDelegates,
-              supportedLocales: context.supportedLocales,
-              locale: context.locale, 
-              
-              theme: ThemeData(
-                brightness: Brightness.light,
-                primarySwatch: Colors.teal,
-                scaffoldBackgroundColor: Colors.teal.shade50,
+            return NEThemeScope(
+              notifier: NEThemeNotifier(initial: NEThemes.assam),
+              child: MaterialApp(
+                title: 'Cognitive Care',
+                localizationsDelegates: context.localizationDelegates,
+                supportedLocales: context.supportedLocales,
+                locale: context.locale, 
+                
+                theme: ThemeData(
+                  brightness: Brightness.light,
+                  primarySwatch: Colors.teal,
+                  scaffoldBackgroundColor: Colors.teal.shade50,
+                ),
+                darkTheme: ThemeData(
+                  brightness: Brightness.dark,
+                  primarySwatch: Colors.teal,
+                  scaffoldBackgroundColor: Colors.grey.shade900,
+                ),
+                themeMode: currentMode,
+                
+                builder: (context, child) {
+                  return MediaQuery(
+                    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+                    child: child!,
+                  );
+                },
+                home: initialScreen,
               ),
-              darkTheme: ThemeData(
-                brightness: Brightness.dark,
-                primarySwatch: Colors.teal,
-                scaffoldBackgroundColor: Colors.grey.shade900,
-              ),
-              themeMode: currentMode,
-              
-              builder: (context, child) {
-                return MediaQuery(
-                  data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
-                  child: child!,
-                );
-              },
-              home: initialScreen,
             );
           },
         );
@@ -753,32 +758,62 @@ class _PatientDashboardState extends State<PatientDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final neTheme = NEThemeScope.of(context);
+    return Theme(
+      data: neTheme.toThemeData(),
+      child: Scaffold(
       appBar: AppBar(
         title: Text('Welcome, $userName'),
         centerTitle: true,
         elevation: 0,
+        backgroundColor: neTheme.appBarColor,
       ),
       drawer: Drawer(
-        child: ListView(
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [neTheme.primary, neTheme.surface],
+            ),
+          ),
+          child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            const DrawerHeader(
-              decoration: BoxDecoration(color: Colors.teal),
-              child: Text('Menu', style: TextStyle(color: Colors.white, fontSize: 24)),
+            DrawerHeader(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [neTheme.primary, neTheme.primaryDark],
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  const Icon(Icons.menu, color: Colors.white, size: 32),
+                  const SizedBox(height: 8),
+                  Text('Menu', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(neTheme.stateName, style: TextStyle(color: Colors.white70, fontSize: 14, fontStyle: FontStyle.italic)),
+                ],
+              ),
             ),
-            ListTile(leading: const Icon(Icons.person), title: const Text('Account'), onTap: () {Navigator.pop(context); 
+            ListTile(leading: Icon(Icons.person, color: neTheme.primary), title: const Text('Account'), onTap: () {Navigator.pop(context); 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountScreen()));}),
-            ListTile(leading: const Icon(Icons.language), title: const Text('Language Settings'), onTap: () {Navigator.pop(context); 
+            ListTile(leading: Icon(Icons.language, color: neTheme.primary), title: const Text('Language Settings'), onTap: () {Navigator.pop(context); 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const LanguageScreen()));}),
-            ListTile(leading: const Icon(Icons.settings), title: const Text('Settings'), onTap: () {Navigator.pop(context); 
+            ListTile(leading: Icon(Icons.settings, color: neTheme.primary), title: const Text('Settings'), onTap: () {Navigator.pop(context); 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));}),
-            ListTile(leading: const Icon(Icons.contact_support), title: const Text('Contact Us'), onTap: () {Navigator.pop(context); 
+            ListTile(leading: Icon(Icons.palette, color: neTheme.accent), title: Text('Regional Theme', style: TextStyle(color: neTheme.accent, fontWeight: FontWeight.w600)), onTap: () {Navigator.pop(context); 
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const RegionalThemeScreen()));}),
+            ListTile(leading: Icon(Icons.contact_support, color: neTheme.primary), title: const Text('Contact Us'), onTap: () {Navigator.pop(context); 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactScreen()));}),
           ],
         ),
+        ),
       ),
-      body: SingleChildScrollView(
+      body: RegionalThemeBackground(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -805,7 +840,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Your Streak', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal)),
+                        Text('Your Streak', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: neTheme.primary)),
                         Row(
                           children: [
                             const Icon(Icons.local_fire_department, color: Colors.orange, size: 28),
@@ -849,7 +884,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Scorecard', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal)),
+                    Text('Scorecard', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: neTheme.primary)),
                     const Divider(thickness: 1.5),
                     Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Game Score (Today):', style: TextStyle(fontSize: 16)), Text('+$dailyGameScore', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))]),
                     const SizedBox(height: 8),
@@ -875,7 +910,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
             const SizedBox(height: 24),
 
             // --- MOOD REFLECTION CARD ---
-            _buildMoodReflectionCard(),
+            _buildMoodReflectionCard(neTheme),
             const SizedBox(height: 16),
 
             // Navigation Grid
@@ -887,19 +922,19 @@ class _PatientDashboardState extends State<PatientDashboard> {
               mainAxisSpacing: 16,
               childAspectRatio: 1.1,
               children: [
-                _buildNavCard(context,'Daily routine', Icons.checklist, const Color.fromARGB(255, 3, 86, 26), onTap: () {
+                _buildNavCard(context,'Daily routine', Icons.checklist, neTheme.primary, onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const DailyRoutineScreen())).then((_) => _loadDashboardData());
                   }),
-                  _buildNavCard(context, 'Games', Icons.videogame_asset, const Color.fromARGB(255, 48, 3, 248), onTap: () {
+                  _buildNavCard(context, 'Games', Icons.videogame_asset, neTheme.accent, onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const GameSelectionScreen())).then((_) => _loadDashboardData());
                   }),
-                  _buildNavCard(context, 'Music Therapy', Icons.music_note, const Color.fromARGB(255, 181, 14, 131), onTap: () {
+                  _buildNavCard(context, 'Music Therapy', Icons.music_note, Color.lerp(neTheme.primary, neTheme.accent, 0.5)!, onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const MusicLibraryScreen()));
                   }),
-                  _buildNavCard(context, 'Family', Icons.family_restroom, const Color.fromARGB(255, 250, 2, 2), onTap: () {
+                  _buildNavCard(context, 'Family', Icons.family_restroom, neTheme.accent, onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const FamilyScreen()));
                   }),
-                  _buildNavCard(context, 'Reminders', Icons.alarm, Colors.orange.shade700, onTap: () {
+                  _buildNavCard(context, 'Reminders', Icons.alarm, neTheme.primary, onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const RemindersSelectionScreen()));
                   }),
               ],
@@ -908,9 +943,10 @@ class _PatientDashboardState extends State<PatientDashboard> {
           ],
         ),
       ),
+      ), // RegionalThemeBackground
       // --- NEW: VOICE ASSISTANT FLOATING BUTTON ---
       floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: isListening ? Colors.redAccent : Colors.teal,
+        backgroundColor: isListening ? Colors.redAccent : neTheme.primary,
         icon: Icon(isListening ? Icons.mic : Icons.mic_none, color: Colors.white),
         label: Text(
           isListening ? "Listening..." : "Voice Assistant",
@@ -919,28 +955,34 @@ class _PatientDashboardState extends State<PatientDashboard> {
         onPressed: _listenForVoiceCommand,
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-    );
+    ),
+    ); // Theme wrapper
   }
 
-  Widget _buildMoodReflectionCard() {
+  Widget _buildMoodReflectionCard(NETheme neTheme) {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _getLatestMoodData(),
       builder: (context, snapshot) {
-        String moodText = 'Feeling Calm & Nostalgic 🎵';
+        String moodText = 'Start listening to music to see your mood reflection';
         String songInfo = '';
         String stateInfo = '';
+        String moodEmoji = '🎵';
 
         if (snapshot.hasData && snapshot.data!.isNotEmpty) {
           final latest = snapshot.data!.first;
           moodText = latest['emotional_state'] as String? ?? 'Listening to Music';
           songInfo = latest['song_title'] as String? ?? '';
           stateInfo = latest['state_name'] as String? ?? '';
+          moodEmoji = _getMoodEmoji(moodText);
         }
 
         return Card(
           elevation: 3,
-          color: Colors.indigo.shade50,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          color: neTheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+            side: BorderSide(color: neTheme.primary.withValues(alpha: 0.2)),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
             child: Row(
@@ -949,10 +991,10 @@ class _PatientDashboardState extends State<PatientDashboard> {
                   width: 56,
                   height: 56,
                   decoration: BoxDecoration(
-                    color: Colors.indigo.withValues(alpha: 0.12),
+                    color: neTheme.primary.withValues(alpha: 0.12),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.self_improvement, color: Colors.indigo, size: 30),
+                  child: Icon(Icons.self_improvement, color: neTheme.primary, size: 30),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -960,26 +1002,37 @@ class _PatientDashboardState extends State<PatientDashboard> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        moodText,
-                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.indigo),
+                        '$moodEmoji $moodText',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: neTheme.primary),
                       ),
-                      if (songInfo.isNotEmpty) ...[
+                      if (songInfo.isNotEmpty || stateInfo.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
-                          '$songInfo · $stateInfo',
+                          [songInfo, stateInfo].where((s) => s.isNotEmpty).join(' · '),
                           style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
                         ),
                       ],
                     ],
                   ),
                 ),
-                Icon(Icons.arrow_forward_ios, color: Colors.indigo.shade200, size: 18),
+                Icon(Icons.arrow_forward_ios, color: neTheme.primary.withValues(alpha: 0.3), size: 18),
               ],
             ),
           ),
         );
       },
     );
+  }
+
+  String _getMoodEmoji(String mood) {
+    final lower = mood.toLowerCase();
+    if (lower.contains('calm') || lower.contains('relax')) return '😌';
+    if (lower.contains('nostalgic') || lower.contains('reminiscence')) return '🎶';
+    if (lower.contains('joy') || lower.contains('engaged')) return '😊';
+    if (lower.contains('agitat') || lower.contains('restless')) return '⚡';
+    if (lower.contains('melancholy') || lower.contains('reflective')) return '🌙';
+    if (lower.contains('exploration') || lower.contains('initial')) return '🎵';
+    return '🎵';
   }
 
   Future<List<Map<String, dynamic>>> _getLatestMoodData() async {
@@ -990,10 +1043,11 @@ class _PatientDashboardState extends State<PatientDashboard> {
   }
 
   Widget _buildNavCard(BuildContext context, String title, IconData icon, Color color, {VoidCallback? onTap}) {
+    final surface = NEThemeScope.of(context).surface;
     return InkWell(
       onTap: onTap,
       child: Card(
-        color: const Color.fromARGB(255, 255, 252, 214),
+        color: surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15),side: BorderSide(color: color.withValues(alpha: 0.3), width: 2)),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -3625,13 +3679,13 @@ class MusicLibraryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Music Therapy'),
-        centerTitle: true,
-        backgroundColor: Colors.purple,
-      ),
-      body: GridView.count(
+    final neTheme = NEThemeScope.of(context);
+    return Theme(
+      data: neTheme.toThemeData(),
+      child: Scaffold(
+      appBar: RegionalAppBar(title: 'Music Therapy'),
+      body: RegionalThemeBackground(
+      child: GridView.count(
         padding: const EdgeInsets.all(16),
         crossAxisCount: 2,
         crossAxisSpacing: 16,
@@ -3666,12 +3720,14 @@ class MusicLibraryScreen extends StatelessWidget {
           _buildMusicCard(context, 'Song Recognition', Icons.quiz, Colors.orange, () {
             Navigator.push(context, MaterialPageRoute(builder: (_) => const SongRecognitionScreen()));
           }),
-          _buildMusicCard(context, 'Regional Music', Icons.album, Colors.deepPurple, () {
+          _buildMusicCard(context, 'Regional Music', Icons.album, neTheme.accent, () {
             Navigator.push(context, MaterialPageRoute(builder: (_) => const RegionalMusicScreen()));
           }),
         ],
       ),
-    );
+      ), // RegionalThemeBackground
+      ),
+    ); // Theme
   }
 
   Widget _buildMusicCard(BuildContext context, String title, IconData icon, Color color, VoidCallback onTap) {
@@ -3682,7 +3738,7 @@ class MusicLibraryScreen extends StatelessWidget {
         elevation: 3,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(15), 
-          side: BorderSide(color: color.withOpacity(0.5), width: 2)
+          side: BorderSide(color: color.withValues(alpha: 0.5), width: 2)
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -3896,12 +3952,11 @@ class _FavouritesScreenState extends State<FavouritesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Favourites'),
-        centerTitle: true,
-        backgroundColor: Colors.redAccent,
-      ),
+    final neTheme = NEThemeScope.of(context);
+    return Theme(
+      data: neTheme.toThemeData(),
+      child: Scaffold(
+      appBar: RegionalAppBar(title: 'My Favourites'),
       body: favouriteSongs.isEmpty
           ? const Center(
               child: Text(
@@ -3957,12 +4012,13 @@ class _FavouritesScreenState extends State<FavouritesScreen> {
               },
             ),
       floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: Colors.redAccent,
+        backgroundColor: neTheme.accent,
         icon: const Icon(Icons.add, color: Colors.white),
         label: const Text('Add Music', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         onPressed: _addMusicFiles,
       ),
-    );
+    ),
+    ); // Theme wrapper
   }
 }
 
@@ -4448,32 +4504,30 @@ class RegionalMusicScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final neTheme = NEThemeScope.of(context);
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Regional Nostalgic Music'),
-        centerTitle: true,
-        backgroundColor: Colors.deepPurple,
-      ),
-      body: Column(
+      appBar: RegionalAppBar(title: 'Regional Nostalgic Music'),
+      body: RegionalThemeBackground(
+      child: Column(
         children: [
-          // Header card
+          // Header card with themed background
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
-            color: Colors.deepPurple.shade50,
+            color: neTheme.primary.withValues(alpha: 0.08),
             child: Column(
               children: [
-                Icon(Icons.album, size: 48, color: Colors.deepPurple.shade300),
+                Icon(Icons.album, size: 48, color: neTheme.primary.withValues(alpha: 0.5)),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   'Nostalgic Folk Music from\nNortheast India',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.deepPurple),
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: neTheme.primary),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'Vintage recordings from the 1960s–1970s era',
-                  style: TextStyle(fontSize: 14, color: Colors.deepPurple.shade300),
+                  style: TextStyle(fontSize: 14, color: neTheme.textSecondary),
                 ),
               ],
             ),
@@ -4523,6 +4577,7 @@ class RegionalMusicScreen extends StatelessWidget {
           ),
         ],
       ),
+      ), // RegionalThemeBackground
     );
   }
 }
@@ -4537,32 +4592,32 @@ class StateFolkListScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('${stateInfo.displayName} Folk Music'),
-        centerTitle: true,
-        backgroundColor: stateInfo.color,
-      ),
-      body: Column(
+    final neTheme = _themeForState(stateInfo.displayName, context);
+    return Theme(
+      data: neTheme.toThemeData(),
+      child: Scaffold(
+        appBar: RegionalAppBar(title: '${stateInfo.displayName} Folk Music'),
+        body: RegionalThemeBackground(
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // State header
+          // State header with themed background
           Container(
             padding: const EdgeInsets.all(20),
-            color: stateInfo.color.withValues(alpha: 0.08),
+            color: neTheme.primary.withValues(alpha: 0.08),
             child: Column(
               children: [
-                Icon(stateInfo.icon, size: 48, color: stateInfo.color),
+                Icon(stateInfo.icon, size: 48, color: neTheme.primary.withValues(alpha: 0.6)),
                 const SizedBox(height: 8),
                 Text(
                   stateInfo.displayName,
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: stateInfo.color),
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: neTheme.primary),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   stateInfo.description,
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                  style: TextStyle(fontSize: 14, color: neTheme.textSecondary),
                 ),
               ],
             ),
@@ -4622,7 +4677,23 @@ class StateFolkListScreen extends StatelessWidget {
           ),
         ],
       ),
+      ), // RegionalThemeBackground
+      ), // Theme wrapper
     );
+  }
+
+  NETheme _themeForState(String stateName, BuildContext ctx) {
+    switch (stateName.toLowerCase()) {
+      case 'assam': return NEThemes.assam;
+      case 'meghalaya': return NEThemes.meghalaya;
+      case 'manipur': return NEThemes.manipur;
+      case 'nagaland': return NEThemes.nagaland;
+      case 'sikkim': return NEThemes.sikkim;
+      case 'tripura': return NEThemes.tripura;
+      case 'mizoram': return NEThemes.mizoram;
+      case 'arunachal pradesh': return NEThemes.arunachal;
+      default: return NEThemeScope.of(ctx);
+    }
   }
 }
 
@@ -4700,20 +4771,51 @@ class _RegionalAudioPlayerScreenState extends State<RegionalAudioPlayerScreen> {
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString('sqlite_user_id') ?? "";
     if (userId.isNotEmpty && _totalListeningSeconds > 0) {
+      // Try to get ML prediction from backend
+      String emotionalState = _predictEmotionalState();
+      String cognitiveResponse = _predictCognitiveResponse();
+      try {
+        final mlResult = await _fetchMLPrediction();
+        if (mlResult != null) {
+          emotionalState = mlResult['emotional_state'] ?? emotionalState;
+          cognitiveResponse = mlResult['cognitive_response'] ?? cognitiveResponse;
+        }
+      } catch (_) {
+        // Fallback to local heuristic — already set above
+      }
+
       await DatabaseHelper.instance.insertRegionalMusicPlay(
         userId: userId,
         stateName: widget.stateInfo.displayName,
         songTitle: widget.song.title,
         durationSeconds: _totalListeningSeconds,
         loopCount: _loopCount,
-        emotionalState: _predictEmotionalState(),
-        cognitiveResponse: _predictCognitiveResponse(),
+        emotionalState: emotionalState,
+        cognitiveResponse: cognitiveResponse,
       );
     }
   }
 
+  Future<Map<String, dynamic>?> _fetchMLPrediction() async {
+    final baseUrl = Platform.isAndroid ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
+    final uri = Uri.parse('$baseUrl/analyze-mood');
+    final response = await http.post(
+      uri,
+      body: {
+        'state_name': widget.stateInfo.displayName,
+        'song_title': widget.song.title,
+        'loop_count': _loopCount.toString(),
+        'total_duration': _totalListeningSeconds.toString(),
+      },
+    ).timeout(const Duration(seconds: 5));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    return null;
+  }
+
   String _predictEmotionalState() {
-    // Simple heuristic-based prediction (ML service would enhance this)
+    // Local heuristic-based prediction (fallback when ML service is unreachable)
     if (_totalListeningSeconds > 120 && _loopCount >= 2) {
       return 'Deep Reminiscence & Nostalgic Joy';
     } else if (_totalListeningSeconds > 60 && _loopCount >= 1) {
@@ -4766,13 +4868,13 @@ class _RegionalAudioPlayerScreenState extends State<RegionalAudioPlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Now Playing'),
-        centerTitle: true,
-        backgroundColor: widget.stateInfo.color,
-      ),
-      body: SingleChildScrollView(
+    final neTheme = _audioThemeForState(widget.stateInfo.displayName);
+    return Theme(
+      data: neTheme.toThemeData(),
+      child: Scaffold(
+        appBar: RegionalAppBar(title: 'Now Playing'),
+        body: RegionalThemeBackground(
+        child: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -4919,7 +5021,7 @@ class _RegionalAudioPlayerScreenState extends State<RegionalAudioPlayerScreen> {
                   children: [
                     Text(
                       'Listening Session',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: widget.stateInfo.color),
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: neTheme.primary),
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -4937,33 +5039,53 @@ class _RegionalAudioPlayerScreenState extends State<RegionalAudioPlayerScreen> {
 
             // Gentle description
             Card(
-              color: Colors.amber.shade50,
+              color: neTheme.surface,
               elevation: 1,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: neTheme.accent.withValues(alpha: 0.2)),
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(14.0),
                 child: Text(
                   widget.song.description,
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
+                  style: TextStyle(fontSize: 14, color: neTheme.textSecondary, height: 1.4),
                 ),
               ),
             ),
           ],
         ),
+        ), // RegionalThemeBackground
       ),
+      ), // Theme wrapper
     );
   }
 
   Widget _buildStat(String label, String value, IconData icon) {
+    final neTheme = _audioThemeForState(widget.stateInfo.displayName);
     return Column(
       children: [
-        Icon(icon, color: widget.stateInfo.color, size: 24),
+        Icon(icon, color: neTheme.primary, size: 24),
         const SizedBox(height: 4),
-        Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+        Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: neTheme.textPrimary)),
+        Text(label, style: TextStyle(fontSize: 12, color: neTheme.textSecondary)),
       ],
     );
+  }
+
+  NETheme _audioThemeForState(String stateName) {
+    switch (stateName.toLowerCase()) {
+      case 'assam': return NEThemes.assam;
+      case 'meghalaya': return NEThemes.meghalaya;
+      case 'manipur': return NEThemes.manipur;
+      case 'nagaland': return NEThemes.nagaland;
+      case 'sikkim': return NEThemes.sikkim;
+      case 'tripura': return NEThemes.tripura;
+      case 'mizoram': return NEThemes.mizoram;
+      case 'arunachal pradesh': return NEThemes.arunachal;
+      default: return NEThemeScope.of(context); // context available in State
+    }
   }
 }
 
@@ -6768,17 +6890,21 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final neTheme = NEThemeScope.of(context);
+    return Theme(
+      data: neTheme.toThemeData(),
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('Caregiver Portal'),
         centerTitle: true,
-        backgroundColor: Colors.blueGrey,
+        backgroundColor: neTheme.appBarColor,
         actions: [
           IconButton(icon: const Icon(Icons.sync), onPressed: _triggerSync, tooltip: 'Sync Data'),
           IconButton(icon: const Icon(Icons.logout), onPressed: _logout, tooltip: 'Log Out')
         ],
       ),
-      body: SingleChildScrollView(
+      body: RegionalThemeBackground(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -6839,16 +6965,16 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
               mainAxisSpacing: 16,
               childAspectRatio: 1.1,
               children: [
-                _buildCaregiverCard('My Patients', Icons.group, Colors.indigo, onTap: () {
+                _buildCaregiverCard('My Patients', Icons.group, neTheme.primary, onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const MyPatientsScreen()));
                 }),
-                _buildCaregiverCard('Analytics', Icons.bar_chart, Colors.purple, onTap: () {
+                _buildCaregiverCard('Analytics', Icons.bar_chart, neTheme.accent, onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const CaregiverAnalyticsScreen()));
                 }),
-                _buildCaregiverCard('Settings', Icons.settings, Colors.blueGrey, onTap: () {
+                _buildCaregiverCard('Settings', Icons.settings, neTheme.primaryDark, onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
                 }),
-                _buildCaregiverCard('Music Insights', Icons.album, Colors.deepPurple, onTap: () {
+                _buildCaregiverCard('Music Insights', Icons.album, Color.lerp(neTheme.primary, neTheme.accent, 0.5)!, onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const CaregiverMusicInsightsScreen()));
                 }),
               ],
@@ -6856,6 +6982,8 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
           ],
         ),
       ),
+      ), // RegionalThemeBackground
+      ), // Theme wrapper
     );
   }
 
@@ -6944,15 +7072,31 @@ class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScr
   }
 
   Widget _buildPatientInsightCard(Map<String, dynamic> patient) {
-    return FutureBuilder<Map<String, dynamic>>(
-      future: DatabaseHelper.instance.getRegionalMusicSummary(patient['user_id']),
-      builder: (context, snapshot) {
-        final summary = snapshot.data ?? {};
-        final totalDuration = summary['total_duration_seconds'] as int? ?? 0;
-        final totalLoops = summary['total_loops'] as int? ?? 0;
-        final mostPlayed = summary['most_played_state'] as String? ?? 'None';
-        final stateDurations = Map<String, int>.from(summary['state_durations'] as Map? ?? {});
-        final stateLoops = Map<String, int>.from(summary['state_loops'] as Map? ?? {});
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: DatabaseHelper.instance.getRegionalMusicPlays(patient['user_id']),
+      builder: (context, playsSnapshot) {
+        final plays = playsSnapshot.data ?? [];
+
+        // Compute summary from plays
+        int totalDuration = 0;
+        int totalLoops = 0;
+        Map<String, int> stateDurations = {};
+        Map<String, int> stateLoops = {};
+        String mostPlayedState = 'None';
+        int maxStateDuration = 0;
+        for (var play in plays) {
+          int dur = play['duration_seconds'] as int? ?? 0;
+          int loops = play['loop_count'] as int? ?? 0;
+          String state = play['state_name'] as String? ?? 'Unknown';
+          totalDuration += dur;
+          totalLoops += loops;
+          stateDurations[state] = (stateDurations[state] ?? 0) + dur;
+          stateLoops[state] = (stateLoops[state] ?? 0) + loops;
+          if ((stateDurations[state] ?? 0) > maxStateDuration) {
+            maxStateDuration = stateDurations[state]!;
+            mostPlayedState = state;
+          }
+        }
 
         String durationFormatted = '';
         if (totalDuration >= 60) {
@@ -6960,6 +7104,15 @@ class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScr
         } else {
           durationFormatted = '$totalDuration seconds';
         }
+
+        // Recent mood trends (last 5 plays)
+        List<Map<String, dynamic>> recentPlays = plays.take(5).toList();
+        String latestCognitive = plays.isNotEmpty
+            ? (plays.first['cognitive_response'] as String? ?? 'No data')
+            : 'No listening data yet';
+        String latestEmotional = plays.isNotEmpty
+            ? (plays.first['emotional_state'] as String? ?? 'No data')
+            : 'No listening data yet';
 
         return Card(
           elevation: 3,
@@ -7000,13 +7153,13 @@ class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScr
                   children: [
                     _buildInsightStat('Total Time', durationFormatted, Icons.timer, Colors.teal),
                     _buildInsightStat('Loops', '$totalLoops', Icons.repeat, Colors.orange),
-                    _buildInsightStat('Tracks', '${summary['total_plays'] ?? 0}', Icons.audiotrack, Colors.blue),
+                    _buildInsightStat('Tracks', '${plays.length}', Icons.audiotrack, Colors.blue),
                   ],
                 ),
                 const SizedBox(height: 16),
 
                 // Most played state
-                if (mostPlayed != 'None')
+                if (mostPlayedState != 'None')
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
@@ -7020,7 +7173,7 @@ class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScr
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Most Played: $mostPlayed',
+                            'Most Played: $mostPlayedState',
                             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.deepPurple),
                           ),
                         ),
@@ -7055,9 +7208,43 @@ class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScr
                   }),
                 ],
 
-                // Cognitive insight
+                // ML Mood Trend (last 5 sessions)
+                if (recentPlays.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text('Recent Mood Trend (ML Predictions):',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+                  const SizedBox(height: 8),
+                  ...recentPlays.map((play) {
+                    final emotion = play['emotional_state'] as String? ?? 'Unknown';
+                    final songTitle = play['song_title'] as String? ?? '';
+                    final color = _getMoodColor(emotion);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 4.0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.circle, size: 8, color: color),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(emotion, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: color)),
+                            ),
+                            if (songTitle.isNotEmpty)
+                              Text(songTitle, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+
+                // Cognitive insight from actual ML data
                 const SizedBox(height: 12),
-                _buildCognitiveInsightCard(totalDuration, totalLoops),
+                _buildCognitiveInsightCardFromML(totalDuration, totalLoops, latestCognitive, latestEmotional),
               ],
             ),
           ),
@@ -7077,7 +7264,7 @@ class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScr
     );
   }
 
-  Widget _buildCognitiveInsightCard(int totalDuration, int totalLoops) {
+  Widget _buildCognitiveInsightCardFromML(int totalDuration, int totalLoops, String latestCognitive, String latestEmotional) {
     String moodIndicator;
     String moodEmoji;
     Color moodColor;
@@ -7112,24 +7299,66 @@ class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScr
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: moodColor.withValues(alpha: 0.3)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(moodEmoji, style: const TextStyle(fontSize: 28)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Cognitive-Emotional Insight',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                Text(moodIndicator,
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: moodColor)),
-              ],
-            ),
+          Row(
+            children: [
+              Text(moodEmoji, style: const TextStyle(fontSize: 28)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Cognitive-Emotional Insight',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                    Text(moodIndicator,
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: moodColor)),
+                  ],
+                ),
+              ),
+            ],
           ),
+          // Show latest ML cognitive response if available
+          if (latestCognitive != 'No listening data yet' && latestCognitive.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Latest ML Cognitive Assessment:',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                  const SizedBox(height: 2),
+                  Text(latestCognitive,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  if (latestEmotional != 'No data' && latestEmotional.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text('Emotional State: $latestEmotional',
+                      style: TextStyle(fontSize: 12, color: Colors.deepPurple.shade700, fontWeight: FontWeight.w500)),
+                  ],
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  Color _getMoodColor(String mood) {
+    final lower = mood.toLowerCase();
+    if (lower.contains('calm') || lower.contains('relax')) return Colors.blue;
+    if (lower.contains('nostalgic') || lower.contains('reminiscence') || lower.contains('joy')) return Colors.teal;
+    if (lower.contains('agitat') || lower.contains('restless') || lower.contains('heightened')) return Colors.red;
+    if (lower.contains('melancholy') || lower.contains('reflective')) return Colors.indigo;
+    if (lower.contains('exploration') || lower.contains('initial')) return Colors.purple;
+    return Colors.grey;
   }
 }
 

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250" fill="none">
+  <!-- Great Hornbill body -->
+  <path d="M80 120 Q85 100 95 95 L75 88 Q68 82 72 90 L78 95 Q70 100 65 110 Q60 125 62 140 Q65 155 80 160 Q100 168 130 165 Q160 160 180 150 Q195 140 200 130 L195 120 Q180 112 155 108 Q130 105 110 108 Q95 112 80 120Z" 
+        stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="currentColor" fill-opacity="0.12"/>
+  <!-- Casque (helmet) -->
+  <path d="M78 98 Q82 78 98 82 Q105 85 100 95" stroke="currentColor" stroke-width="2.5" fill="currentColor" fill-opacity="0.08"/>
+  <!-- Beak -->
+  <path d="M65 110 L42 105 L48 112 L62 115" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <!-- Eye -->
+  <circle cx="80" cy="108" r="3" fill="currentColor"/>
+  
+  <!-- Wing spread upward -->
+  <path d="M120 110 Q105 80 90 65 Q85 58 88 68 Q95 82 110 100" stroke="currentColor" stroke-width="2" fill="currentColor" fill-opacity="0.06"/>
+  <path d="M130 108 Q115 75 100 58 Q95 50 98 60 Q105 75 120 98" stroke="currentColor" stroke-width="1.8" fill="none"/>
+  <!-- Wing feather lines -->
+  <line x1="100" y1="78" x2="96" y2="68" stroke="currentColor" stroke-width="1.2"/>
+  <line x1="108" y1="85" x2="104" y2="75" stroke="currentColor" stroke-width="1.2"/>
+  <line x1="116" y1="92" x2="112" y2="82" stroke="currentColor" stroke-width="1.2"/>
+  
+  <!-- Tail feathers -->
+  <path d="M195 135 Q215 130 230 135 Q225 140 210 142 Q200 140 195 135Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.08"/>
+  <path d="M192 140 Q212 138 228 142 Q222 148 208 148 Q198 145 192 140Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.06"/>
+  
+  <!-- Tribal shield -->
+  <path d="M230 80 L260 80 L270 110 L260 150 L230 150 L220 110Z" 
+        stroke="currentColor" stroke-width="2.5" fill="currentColor" fill-opacity="0.08"/>
+  <!-- Shield inner diamond -->
+  <path d="M245 88 L262 110 L245 140 L228 110Z" stroke="currentColor" stroke-width="2" fill="none"/>
+  <!-- Shield center dot -->
+  <circle cx="245" cy="110" r="5" fill="currentColor" fill-opacity="0.15"/>
+  <!-- Shield spear lines -->
+  <line x1="245" y1="80" x2="245" y2="88" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="245" y1="140" x2="245" y2="150" stroke="currentColor" stroke-width="1.5"/>
+  
+  <!-- Tribal diamond border at bottom -->
+  <path d="M60 200 L70 210 L60 220 L50 210Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M90 200 L100 210 L90 220 L80 210Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M120 200 L130 210 L120 220 L110 210Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M150 200 L160 210 L150 220 L140 210Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M180 200 L190 210 L180 220 L170 210Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M210 200 L220 210 L210 220 L200 210Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+</svg>

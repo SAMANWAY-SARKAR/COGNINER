@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250" fill="none">
+  <!-- Mountain range background -->
+  <path d="M-10 180 L30 120 L60 145 L100 95 L140 130 L170 105 L200 125 L240 90 L280 130 L320 180Z" 
+        stroke="currentColor" stroke-width="1.8" fill="currentColor" fill-opacity="0.06"/>
+  
+  <!-- Dawn sun rising behind mountains -->
+  <circle cx="150" cy="100" r="18" stroke="currentColor" stroke-width="2" fill="currentColor" fill-opacity="0.08"/>
+  <!-- Sun rays -->
+  <line x1="150" y1="75" x2="150" y2="62" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="163" y1="78" x2="172" y2="67" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="173" y1="92" x2="184" y2="87" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="137" y1="78" x2="128" y2="67" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="127" y1="92" x2="116" y2="87" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="150" y1="125" x2="150" y2="135" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  
+  <!-- Tawang Monastery - multi-tiered pagoda -->
+  <!-- Base building -->
+  <rect x="110" y="160" width="80" height="35" rx="1" stroke="currentColor" stroke-width="2.5" fill="currentColor" fill-opacity="0.08"/>
+  
+  <!-- First roof tier (widest) -->
+  <path d="M95 160 L150 142 L205 160" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="currentColor" fill-opacity="0.05"/>
+  <!-- Eave curves -->
+  <path d="M95 160 Q92 158 90 160" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M205 160 Q208 158 210 160" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  
+  <!-- Second roof tier -->
+  <path d="M115 142 L150 125 L185 142" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="currentColor" fill-opacity="0.05"/>
+  
+  <!-- Third roof tier (smallest) -->
+  <path d="M130 125 L150 112 L170 125" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="currentColor" fill-opacity="0.05"/>
+  
+  <!-- Top spire -->
+  <line x1="150" y1="112" x2="150" y2="92" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="150" cy="88" r="4" stroke="currentColor" stroke-width="1.8" fill="currentColor" fill-opacity="0.12"/>
+  
+  <!-- Windows on building -->
+  <rect x="120" y="170" width="12" height="15" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  <rect x="144" y="170" width="12" height="15" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  <rect x="168" y="170" width="12" height="15" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  
+  <!-- Door -->
+  <path d="M143 195 L143 180 Q150 175 157 180 L157 195" stroke="currentColor" stroke-width="1.8" fill="currentColor" fill-opacity="0.06"/>
+  
+  <!-- Prayer flags string from monastery -->
+  <path d="M150 88 Q180 80 210 85 Q240 90 270 82" stroke="currentColor" stroke-width="1" fill="none"/>
+  <rect x="170" y="82" width="6" height="10" rx="1" fill="currentColor" fill-opacity="0.1" transform="rotate(3 173 87)"/>
+  <rect x="195" y="84" width="6" height="10" rx="1" fill="currentColor" fill-opacity="0.1" transform="rotate(-2 198 89)"/>
+  <rect x="220" y="86" width="6" height="10" rx="1" fill="currentColor" fill-opacity="0.1" transform="rotate(4 223 91)"/>
+  <rect x="245" y="83" width="6" height="10" rx="1" fill="currentColor" fill-opacity="0.1" transform="rotate(-1 248 88)"/>
+</svg>

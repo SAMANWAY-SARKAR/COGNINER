@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250" fill="none">
+  <!-- Left tree trunk -->
+  <path d="M50 220 L48 140 Q46 120 50 100 Q52 85 48 60" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+  <path d="M58 220 L60 140 Q62 120 58 100 Q56 85 60 60" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <!-- Left canopy -->
+  <path d="M30 70 Q40 40 60 35 Q80 40 85 65 Q75 55 60 52 Q45 55 30 70Z" 
+        stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  
+  <!-- Right tree trunk -->
+  <path d="M230 220 L228 140 Q226 120 230 100 Q232 85 228 60" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+  <path d="M238 220 L240 140 Q242 120 238 100 Q236 85 240 60" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <!-- Right canopy -->
+  <path d="M210 70 Q220 40 240 35 Q260 40 265 65 Q255 55 240 52 Q225 55 210 70Z" 
+        stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  
+  <!-- Root bridge arch -->
+  <path d="M55 110 Q90 135 145 130 Q200 125 232 110" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <!-- Secondary root -->
+  <path d="M58 120 Q95 145 145 140 Q195 135 230 120" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <!-- Hanging root tendrils -->
+  <path d="M90 132 Q88 150 92 165" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <path d="M120 134 Q118 155 122 170" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <path d="M150 133 Q152 152 148 168" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <path d="M180 131 Q178 148 182 162" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <path d="M210 128 Q208 145 212 158" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  
+  <!-- Bridge planks -->
+  <rect x="80" y="134" width="16" height="4" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(-2 88 136)"/>
+  <rect x="110" y="136" width="16" height="4" rx="1" fill="currentColor" fill-opacity="0.12"/>
+  <rect x="140" y="135" width="16" height="4" rx="1" fill="currentColor" fill-opacity="0.12"/>
+  <rect x="170" y="133" width="16" height="4" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(1 178 135)"/>
+  <rect x="200" y="131" width="16" height="4" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(2 208 133)"/>
+  
+  <!-- Waterfall cascading left side -->
+  <path d="M15 50 Q18 80 14 110 Q11 140 15 170 Q18 195 14 220" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <path d="M22 55 Q25 85 21 115 Q18 145 22 175 Q25 200 21 225" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+  <path d="M28 60 Q31 90 27 120 Q24 150 28 180" stroke="currentColor" stroke-width="1" stroke-linecap="round" fill="none"/>
+  
+  <!-- Mist/cloud wisps -->
+  <path d="M100 25 Q120 18 140 22 Q155 20 165 28 Q150 32 135 30 Q120 33 100 25Z" 
+        stroke="currentColor" stroke-width="1.2" fill="currentColor" fill-opacity="0.06"/>
+  <path d="M180 20 Q195 14 210 18 Q220 16 228 22 Q218 26 205 24 Q192 27 180 20Z" 
+        stroke="currentColor" stroke-width="1.2" fill="currentColor" fill-opacity="0.06"/>
+</svg>

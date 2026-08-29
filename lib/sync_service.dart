@@ -25,6 +25,7 @@ class SyncService {
     await _syncCaregivers();
     await _syncGameSessions();
     await _syncMusicSessions();
+    await _syncRegionalMusicPlays();
   }
 
   Future<void> _syncPatients() async {
@@ -63,6 +64,16 @@ class SyncService {
       final success = await _post('/music-sessions/', session);
       if (success) {
         await _db.markMusicSessionSynced(session['session_id']);
+      }
+    }
+  }
+
+  Future<void> _syncRegionalMusicPlays() async {
+    final unsynced = await _db.getUnsyncedRegionalMusicPlays();
+    for (final play in unsynced) {
+      final success = await _post('/regional-music-plays/', play);
+      if (success) {
+        await _db.markRegionalMusicPlaySynced(play['play_id']);
       }
     }
   }

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250" fill="none">
+  <!-- Mountain peaks - Kanchenjunga -->
+  <path d="M20 200 L70 100 L95 135 L130 70 L165 120 L195 85 L240 200Z" 
+        stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="currentColor" fill-opacity="0.1"/>
+  <!-- Snow caps -->
+  <path d="M125 82 L130 70 L135 82" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M190 95 L195 85 L200 95" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <path d="M65 110 L70 100 L75 110" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  
+  <!-- Buddha seated in lotus -->
+  <!-- Head -->
+  <circle cx="250" cy="140" r="12" stroke="currentColor" stroke-width="2" fill="currentColor" fill-opacity="0.12"/>
+  <!-- Ushnisha -->
+  <circle cx="250" cy="125" r="6" stroke="currentColor" stroke-width="1.8" fill="currentColor" fill-opacity="0.1"/>
+  <!-- Halo -->
+  <circle cx="250" cy="140" r="22" stroke="currentColor" stroke-width="1.2" fill="none" stroke-dasharray="3 4"/>
+  <!-- Body/Torso -->
+  <path d="M235 155 Q232 170 230 185 Q240 195 250 196 Q260 195 270 185 Q268 170 265 155Z" 
+        stroke="currentColor" stroke-width="2" fill="currentColor" fill-opacity="0.08"/>
+  <!-- Crossed legs -->
+  <path d="M225 190 Q240 205 250 204 Q260 205 275 190" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <!-- Hands in dhyana mudra -->
+  <ellipse cx="250" cy="182" rx="8" ry="5" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.08"/>
+  
+  <!-- Prayer flags string -->
+  <path d="M10 45 Q80 35 160 42 Q220 48 290 40" stroke="currentColor" stroke-width="1.2" fill="none"/>
+  <rect x="30" y="45" width="8" height="14" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(-5 34 52)"/>
+  <rect x="70" y="40" width="8" height="14" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(3 74 47)"/>
+  <rect x="110" y="43" width="8" height="14" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(-2 114 50)"/>
+  <rect x="150" y="41" width="8" height="14" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(4 154 48)"/>
+  <rect x="190" y="44" width="8" height="14" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(-3 194 51)"/>
+  <rect x="230" y="40" width="8" height="14" rx="1" fill="currentColor" fill-opacity="0.12" transform="rotate(2 234 47)"/>
+</svg>

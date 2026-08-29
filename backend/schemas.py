@@ -76,3 +76,22 @@ class MusicSessionOut(MusicSessionCreate):
 
     class Config:
         from_attributes = True
+
+
+class RegionalMusicPlayCreate(BaseModel):
+    play_id: UUID
+    user_id: UUID
+    state_name: str
+    song_title: str
+    duration_seconds: int = 0
+    loop_count: int = 0
+    emotional_state: Optional[str] = None
+    cognitive_response: Optional[str] = None
+
+
+class RegionalMusicPlayOut(RegionalMusicPlayCreate):
+    timestamp: datetime
+    synced: int = 1
+
+    class Config:
+        from_attributes = True

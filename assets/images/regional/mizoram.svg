@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250" fill="none">
+  <!-- Rolling hills - multiple layers -->
+  <path d="M-10 180 Q40 140 100 155 Q160 170 220 145 Q280 120 320 160" 
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="currentColor" fill-opacity="0.06"/>
+  <path d="M-10 200 Q50 165 120 175 Q180 185 240 165 Q300 145 320 180" 
+        stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="currentColor" fill-opacity="0.08"/>
+  <path d="M-10 220 Q60 190 130 200 Q200 210 260 190 Q310 175 320 200" 
+        stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="currentColor" fill-opacity="0.1"/>
+  <!-- Foreground hill -->
+  <path d="M-10 240 Q70 215 150 225 Q230 235 320 220" 
+        stroke="currentColor" stroke-width="2.8" stroke-linecap="round" fill="currentColor" fill-opacity="0.12"/>
+  
+  <!-- Cheraw bamboo dance sticks -->
+  <!-- Two horizontal sticks on ground -->
+  <line x1="80" y1="120" x2="200" y2="120" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="80" y1="132" x2="200" y2="132" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+  
+  <!-- Vertical sticks being clapped -->
+  <line x1="120" y1="90" x2="120" y2="162" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="160" y1="90" x2="160" y2="162" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+  
+  <!-- Stick grip marks / hands -->
+  <circle cx="120" cy="95" r="4" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <circle cx="160" cy="95" r="4" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <circle cx="120" cy="155" r="4" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <circle cx="160" cy="155" r="4" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  
+  <!-- Stick cross-hatching marks -->
+  <line x1="116" y1="120" x2="124" y2="120" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="156" y1="120" x2="164" y2="120" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="116" y1="132" x2="124" y2="132" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="156" y1="132" x2="164" y2="132" stroke="currentColor" stroke-width="1.5"/>
+  
+  <!-- Puan fabric geometric border -->
+  <path d="M30 240 L40 248 L30 256 L20 248Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M55 240 L65 248 L55 256 L45 248Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  <path d="M80 240 L90 248 L80 256 L70 248Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  
+  <!-- Hill vegetation texture -->
+  <path d="M50 170 L48 160 M55 168 L57 158 M45 172 L43 164" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+  <path d="M240 155 L238 145 M245 153 L247 143 M235 157 L233 149" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+</svg>

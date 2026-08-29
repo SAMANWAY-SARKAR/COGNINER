@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250" fill="none">
+  <!-- Neermahal Water Palace -->
+  <!-- Main building -->
+  <rect x="80" y="100" width="140" height="60" rx="2" stroke="currentColor" stroke-width="2.5" fill="currentColor" fill-opacity="0.08"/>
+  <!-- Central dome -->
+  <path d="M120 100 Q130 70 150 60 Q170 70 180 100" stroke="currentColor" stroke-width="2.5" fill="currentColor" fill-opacity="0.06"/>
+  <!-- Dome spire -->
+  <line x1="150" y1="60" x2="150" y2="42" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="150" cy="38" r="4" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.1"/>
+  
+  <!-- Side towers -->
+  <rect x="68" y="80" width="18" height="80" rx="1" stroke="currentColor" stroke-width="2" fill="currentColor" fill-opacity="0.06"/>
+  <rect x="214" y="80" width="18" height="80" rx="1" stroke="currentColor" stroke-width="2" fill="currentColor" fill-opacity="0.06"/>
+  <!-- Tower tops -->
+  <path d="M66 80 Q77 65 88 80" stroke="currentColor" stroke-width="2" fill="none"/>
+  <path d="M212 80 Q223 65 234 80" stroke="currentColor" stroke-width="2" fill="none"/>
+  
+  <!-- Arched windows -->
+  <path d="M105 115 Q110 108 115 115 L115 135 L105 135Z" stroke="currentColor" stroke-width="1.8" fill="none"/>
+  <path d="M135 115 Q140 108 145 115 L145 135 L135 135Z" stroke="currentColor" stroke-width="1.8" fill="none"/>
+  <path d="M155 115 Q160 108 165 115 L165 135 L155 135Z" stroke="currentColor" stroke-width="1.8" fill="none"/>
+  <path d="M185 115 Q190 108 195 115 L195 135 L185 135Z" stroke="currentColor" stroke-width="1.8" fill="none"/>
+  
+  <!-- Balcony railing -->
+  <line x1="80" y1="135" x2="220" y2="135" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="80" y1="138" x2="220" y2="138" stroke="currentColor" stroke-width="1"/>
+  <!-- Railing posts -->
+  <line x1="100" y1="135" x2="100" y2="138" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="120" y1="135" x2="120" y2="138" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="140" y1="135" x2="140" y2="138" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="160" y1="135" x2="160" y2="138" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="180" y1="135" x2="180" y2="138" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="200" y1="135" x2="200" y2="138" stroke="currentColor" stroke-width="1.5"/>
+  
+  <!-- Water reflection -->
+  <path d="M60 175 Q150 185 260 172" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  <path d="M50 185 Q140 195 270 182" stroke="currentColor" stroke-width="1.2" fill="none"/>
+  <path d="M70 195 Q150 202 250 192" stroke="currentColor" stroke-width="1" fill="none"/>
+  <path d="M80 205 Q160 212 240 202" stroke="currentColor" stroke-width="0.8" fill="none"/>
+  
+  <!-- Bamboo weave pattern bottom-right -->
+  <g transform="translate(240, 190)">
+    <!-- Grid lines -->
+    <line x1="0" y1="0" x2="0" y2="40" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="10" y1="0" x2="10" y2="40" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="20" y1="0" x2="20" y2="40" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="30" y1="0" x2="30" y2="40" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="0" y1="0" x2="30" y2="0" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="0" y1="10" x2="30" y2="10" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="0" y1="20" x2="30" y2="20" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="0" y1="30" x2="30" y2="30" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="0" y1="40" x2="30" y2="40" stroke="currentColor" stroke-width="1.2"/>
+    <!-- Diagonal weave -->
+    <line x1="0" y1="0" x2="30" y2="30" stroke="currentColor" stroke-width="0.8" opacity="0.5"/>
+    <line x1="30" y1="0" x2="0" y2="30" stroke="currentColor" stroke-width="0.8" opacity="0.5"/>
+  </g>
+</svg>
