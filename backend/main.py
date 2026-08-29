@@ -1,7 +1,13 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from google import genai
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import models
 import schemas
 from database import Base, engine, SessionLocal
@@ -9,6 +15,15 @@ from database import Base, engine, SessionLocal
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Cogniner Sync API")
+
+# --- CORS CONFIGURATION ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def get_db():
     db = SessionLocal()
@@ -152,7 +167,6 @@ def create_music_session(session: schemas.MusicSessionCreate, db: Session = Depe
     db.refresh(db_session)
     return db_session
 
-
 # --- REGIONAL MUSIC PLAYS ---
 @app.post("/regional-music-plays/", response_model=schemas.RegionalMusicPlayOut)
 def sync_regional_music_play(play: schemas.RegionalMusicPlayCreate, db: Session = Depends(get_db)):
@@ -171,14 +185,12 @@ def sync_regional_music_play(play: schemas.RegionalMusicPlayCreate, db: Session 
     db.refresh(db_play)
     return db_play
 
-
 @app.get("/regional-music-plays/{user_id}")
 def get_regional_music_plays(user_id: str, db: Session = Depends(get_db)):
     plays = db.query(models.RegionalMusicPlay).filter(
         models.RegionalMusicPlay.user_id == user_id
     ).order_by(models.RegionalMusicPlay.timestamp.desc()).all()
     return [schemas.RegionalMusicPlayOut.from_orm(p) for p in plays]
-
 
 @app.get("/regional-music-summary/{user_id}")
 def get_regional_music_summary(user_id: str, db: Session = Depends(get_db)):
@@ -203,8 +215,7 @@ def get_regional_music_summary(user_id: str, db: Session = Depends(get_db)):
         'state_loops': state_loops,
     }
 
-
-# --- ML MOOD ANALYSIS (calls audio_ml_service internally) ---
+# --- ML MOOD ANALYSIS ---
 @app.post("/analyze-mood")
 def analyze_mood(
     state_name: str = '',
@@ -213,16 +224,11 @@ def analyze_mood(
     total_duration: float = 0.0,
     audio_path: str = '',
 ):
-    """
-    Predict emotional/cognitive state using the ML pipeline.
-    Falls back to rule-based prediction if audio_ml_service is not available.
-    """
     try:
         from audio_ml_service import analyze_song as ml_analyze_song
         if audio_path and os.path.exists(audio_path):
             result = ml_analyze_song(audio_path, loop_count, total_duration)
         else:
-            # Use rule-based prediction when no audio file is available
             from audio_ml_service import AudioFeatures, get_predictor
             features = AudioFeatures(
                 tempo_bpm=80.0 if loop_count <= 1 else 100.0,
@@ -240,7 +246,6 @@ def analyze_mood(
             }
         return result
     except ImportError:
-        # Fallback: rule-based heuristic when ML service is not importable
         from audio_ml_service import AudioFeatures, get_predictor
         features = AudioFeatures(
             tempo_bpm=80.0 if loop_count <= 1 else 100.0,
@@ -265,3 +270,27 @@ def analyze_mood(
             'valence': 'neutral',
             'error': str(e),
         }
+
+# --- AI CHATBOT ENDPOINTS ---
+
+@app.post("/caregiver-advisor/", response_model=schemas.ChatResponse)
+def caregiver_advisor(request: schemas.ChatRequest):
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    response = client.models.generate_content(
+        model="gemini-3.5-flash",
+        contents=f"You are a compassionate dementia care advisor. The caregiver asks: {request.message}"
+    )
+    return schemas.ChatResponse(reply=response.text)
+
+@app.post("/patient-chat/", response_model=schemas.ChatResponse)
+def patient_chat(request: schemas.ChatRequest):
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    response = client.models.generate_content(
+        model="gemini-3.5-flash",
+        contents=(
+            "You are a warm, gentle, and comforting daily companion for an elderly person "
+            "with cognitive needs. Keep your answers very short, simple, reassuring, "
+            "and friendly. The user says: " + request.message
+        )
+    )
+    return schemas.ChatResponse(reply=response.text)

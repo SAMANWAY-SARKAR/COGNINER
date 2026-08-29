@@ -1,3 +1,5 @@
+import 'caregiver_advisor_screen.dart';
+import 'patient_chat_screen.dart'; // <--- ADD THIS
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
@@ -933,6 +935,9 @@ class _PatientDashboardState extends State<PatientDashboard> {
                   }),
                   _buildNavCard(context, 'Family', Icons.family_restroom, neTheme.accent, onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const FamilyScreen()));
+                  }),
+                  _buildNavCard(context, 'AI Companion', Icons.chat_bubble, Colors.teal, onTap: () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const PatientChatScreen()));
                   }),
                   _buildNavCard(context, 'Reminders', Icons.alarm, neTheme.primary, onTap: () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const RemindersSelectionScreen()));
@@ -6973,6 +6978,9 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
                 }),
                 _buildCaregiverCard('Settings', Icons.settings, neTheme.primaryDark, onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                }),
+                _buildCaregiverCard('AI Advisor', Icons.psychology, Colors.teal, onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CaregiverAdvisorScreen()));
                 }),
                 _buildCaregiverCard('Music Insights', Icons.album, Color.lerp(neTheme.primary, neTheme.accent, 0.5)!, onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const CaregiverMusicInsightsScreen()));
