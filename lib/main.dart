@@ -719,6 +719,13 @@ class _PatientDashboardState extends State<PatientDashboard> {
             .then((_) => _loadDashboardData());
         break;
 
+      case 'start_task_sequencer':
+        await VoiceAssistantService.instance.speak("Starting daily task sequencer.");
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const DailyTaskSequencerGame()))
+            .then((_) => _loadDashboardData());
+        break;
+
       case 'open_music':
         await VoiceAssistantService.instance.speak("Opening music therapy.");
         if (!mounted) return;
@@ -866,7 +873,11 @@ class _PatientDashboardState extends State<PatientDashboard> {
               ),
             ),
             const SizedBox(height: 24),
-            
+
+            // --- MOOD REFLECTION CARD ---
+            _buildMoodReflectionCard(),
+            const SizedBox(height: 16),
+
             // Navigation Grid
             GridView.count(
               shrinkWrap: true,
@@ -909,6 +920,73 @@ class _PatientDashboardState extends State<PatientDashboard> {
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
+  }
+
+  Widget _buildMoodReflectionCard() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _getLatestMoodData(),
+      builder: (context, snapshot) {
+        String moodText = 'Feeling Calm & Nostalgic 🎵';
+        String songInfo = '';
+        String stateInfo = '';
+
+        if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+          final latest = snapshot.data!.first;
+          moodText = latest['emotional_state'] as String? ?? 'Listening to Music';
+          songInfo = latest['song_title'] as String? ?? '';
+          stateInfo = latest['state_name'] as String? ?? '';
+        }
+
+        return Card(
+          elevation: 3,
+          color: Colors.indigo.shade50,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.self_improvement, color: Colors.indigo, size: 30),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        moodText,
+                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.indigo),
+                      ),
+                      if (songInfo.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '$songInfo · $stateInfo',
+                          style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(Icons.arrow_forward_ios, color: Colors.indigo.shade200, size: 18),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _getLatestMoodData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('sqlite_user_id') ?? "";
+    if (userId.isEmpty) return [];
+    return await DatabaseHelper.instance.getRegionalMusicPlays(userId);
   }
 
   Widget _buildNavCard(BuildContext context, String title, IconData icon, Color color, {VoidCallback? onTap}) {
@@ -997,6 +1075,28 @@ class GameSelectionScreen extends StatelessWidget {
             title: const Text('Photo Recognition', style: TextStyle(fontWeight: FontWeight.bold)),
             subtitle: const Text('Identify daily objects, food, and animals'),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PhotoRecognitionScreen())),
+          ),
+          const SizedBox(height: 12),
+
+          // 5. Daily Task Sequencer
+          ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            tileColor: Colors.white,
+            leading: const Icon(Icons.sort, color: Colors.deepOrange, size: 40),
+            title: const Text('Daily Task Sequencer', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Put daily tasks in the correct order'),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DailyTaskSequencerGame())),
+          ),
+          const SizedBox(height: 12),
+
+          // 6. Verbal Fluency
+          ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            tileColor: Colors.white,
+            leading: const Icon(Icons.record_voice_over, color: Colors.indigo, size: 40),
+            title: const Text('Verbal Fluency', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Find words that belong to a category'),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VerbalFluencyGame())),
           ),
         ],
       ),
@@ -2074,6 +2174,914 @@ class _PhotoRecognitionScreenState extends State<PhotoRecognitionScreen> {
 
 
 
+
+
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+//////       DAILY TASK SEQUENCER GAME          //////
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+
+class DailyTaskSequencerGame extends StatefulWidget {
+  const DailyTaskSequencerGame({super.key});
+
+  @override
+  State<DailyTaskSequencerGame> createState() => _DailyTaskSequencerGameState();
+}
+
+class _DailyTaskSequencerGameState extends State<DailyTaskSequencerGame> {
+  int score = 0;
+  int currentTaskIndex = 0;
+  bool isGameComplete = false;
+
+  // Each round is a list of daily tasks in correct order
+  late List<DailyTaskItem> _correctOrder;
+  late List<DailyTaskItem> _shuffledTasks;
+  List<DailyTaskItem?> _placedTasks = [];
+
+  final List<String> encouragingMessages = [
+    "You're doing wonderfully! 🌟",
+    "Great thinking! Keep going! ✨",
+    "That's right! Well done! 🌻",
+    "Beautiful work! Almost there! 🎉",
+  ];
+
+  final List<String> gentleRetryMessages = [
+    "Almost! Think about what happens first in the morning. 🤗",
+    "Good try! Let's think about which comes before the other. 💛",
+    "Not quite — take your time, there's no rush at all. ☀️",
+    "That's a thoughtful guess! Try another one. 🌸",
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _startNewRound();
+  }
+
+  void _startNewRound() {
+    // Define common daily routines in chronological order
+    final allSequences = [
+      [
+        DailyTaskItem(label: 'Wake Up', icon: Icons.wb_sunny),
+        DailyTaskItem(label: 'Brush Teeth', icon: Icons.clean_hands),
+        DailyTaskItem(label: 'Take a Bath', icon: Icons.bathtub),
+        DailyTaskItem(label: 'Get Dressed', icon: Icons.checkroom),
+        DailyTaskItem(label: 'Eat Breakfast', icon: Icons.free_breakfast),
+      ],
+      [
+        DailyTaskItem(label: 'Wake Up', icon: Icons.wb_sunny),
+        DailyTaskItem(label: 'Eat Breakfast', icon: Icons.free_breakfast),
+        DailyTaskItem(label: 'Take Medicine', icon: Icons.medication),
+        DailyTaskItem(label: 'Go for a Walk', icon: Icons.directions_walk),
+        DailyTaskItem(label: 'Have Lunch', icon: Icons.restaurant),
+      ],
+      [
+        DailyTaskItem(label: 'Eat Lunch', icon: Icons.restaurant),
+        DailyTaskItem(label: 'Rest / Nap', icon: Icons.bedtime),
+        DailyTaskItem(label: 'Listen to Music', icon: Icons.music_note),
+        DailyTaskItem(label: 'Have Dinner', icon: Icons.dinner_dining),
+        DailyTaskItem(label: 'Go to Sleep', icon: Icons.nightlight_round),
+      ],
+      [
+        DailyTaskItem(label: 'Wake Up', icon: Icons.wb_sunny),
+        DailyTaskItem(label: 'Brush Teeth', icon: Icons.clean_hands),
+        DailyTaskItem(label: 'Eat Breakfast', icon: Icons.free_breakfast),
+        DailyTaskItem(label: 'Read a Book', icon: Icons.menu_book),
+        DailyTaskItem(label: 'Have Lunch', icon: Icons.restaurant),
+      ],
+    ];
+
+    allSequences.shuffle();
+    _correctOrder = List.from(allSequences.first);
+    _shuffledTasks = List.from(allSequences.first)..shuffle();
+    _placedTasks = List.filled(_correctOrder.length, null);
+    currentTaskIndex = 0;
+    isGameComplete = false;
+
+    setState(() {});
+  }
+
+  void _onTaskTapped(DailyTaskItem task) {
+    if (isGameComplete) return;
+    // Prevent tapping the same task twice
+    if (_placedTasks.contains(task)) return;
+
+    // Check if correct
+    if (task.label == _correctOrder[currentTaskIndex].label) {
+      // Correct!
+      setState(() {
+        _placedTasks[currentTaskIndex] = task;
+        currentTaskIndex++;
+        score += 10;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            encouragingMessages[Random().nextInt(encouragingMessages.length)],
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+          ),
+          backgroundColor: Colors.green.shade600,
+          duration: const Duration(seconds: 2),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+
+      // Check if round complete
+      if (currentTaskIndex >= _correctOrder.length) {
+        _completeRound();
+      }
+    } else {
+      // Wrong choice — gentle encouragement, no penalty
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            gentleRetryMessages[Random().nextInt(gentleRetryMessages.length)],
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+          ),
+          backgroundColor: Colors.teal.shade400,
+          duration: const Duration(seconds: 3),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    }
+  }
+
+  Future<void> _completeRound() async {
+    setState(() => isGameComplete = true);
+
+    // Save score to database
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('sqlite_user_id') ?? "";
+    if (userId.isNotEmpty) {
+      await ScoreService().recordActivity(userId: userId, earnedPoints: 10);
+    }
+  }
+
+  void _playAgain() {
+    setState(() {
+      score = 0;
+    });
+    _startNewRound();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Daily Task Sequencer'),
+        centerTitle: true,
+        actions: [
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: Row(
+                children: [
+                  const Icon(Icons.star, color: Colors.amber, size: 24),
+                  const SizedBox(width: 4),
+                  Text('$score', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: isGameComplete ? _buildCompletionScreen() : _buildGameBody(),
+    );
+  }
+
+  Widget _buildGameBody() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Instruction card
+          Card(
+            elevation: 2,
+            color: Colors.teal.shade50,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  Icon(Icons.sort, size: 40, color: Colors.teal.shade700),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Put the daily tasks in the right order!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tap the task that comes next.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 16, color: Colors.teal.shade600),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Placed tasks (sequence being built)
+          Expanded(
+            flex: 3,
+            child: Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Your Sequence:',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal.shade700),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _placedTasks.length,
+                        itemBuilder: (context, index) {
+                          final placed = _placedTasks[index];
+                          final isNext = index == currentTaskIndex;
+
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 6.0),
+                            child: Container(
+                              constraints: const BoxConstraints(minHeight: 52),
+                              decoration: BoxDecoration(
+                                color: placed != null
+                                    ? Colors.green.shade50
+                                    : isNext
+                                        ? Colors.amber.shade50
+                                        : Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: placed != null
+                                      ? Colors.green.shade300
+                                      : isNext
+                                          ? Colors.amber.shade300
+                                          : Colors.grey.shade200,
+                                  width: 2,
+                                ),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 32,
+                                      height: 32,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: placed != null ? Colors.green : (isNext ? Colors.amber : Colors.grey.shade300),
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          '${index + 1}',
+                                          style: TextStyle(
+                                            color: placed != null || isNext ? Colors.white : Colors.grey.shade600,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    if (placed != null) ...[
+                                      Icon(placed.icon, color: Colors.green.shade700, size: 24),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        placed.label,
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.green.shade800,
+                                        ),
+                                      ),
+                                    ] else if (isNext) ...[
+                                      Text(
+                                        'Tap a task below ↓',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontStyle: FontStyle.italic,
+                                          color: Colors.amber.shade700,
+                                        ),
+                                      ),
+                                    ] else ...[
+                                      Text(
+                                        '—',
+                                        style: TextStyle(fontSize: 16, color: Colors.grey.shade400),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Available tasks to choose from
+          Expanded(
+            flex: 2,
+            child: Card(
+              elevation: 2,
+              color: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Available Tasks:',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: _shuffledTasks.map((task) {
+                          bool isAlreadyPlaced = _placedTasks.contains(task);
+                          return SizedBox(
+                            height: 60,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: isAlreadyPlaced ? Colors.grey.shade200 : Colors.teal.shade50,
+                                foregroundColor: isAlreadyPlaced ? Colors.grey.shade400 : Colors.teal.shade800,
+                                elevation: isAlreadyPlaced ? 0 : 3,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: BorderSide(
+                                    color: isAlreadyPlaced ? Colors.grey.shade300 : Colors.teal.shade200,
+                                    width: 2,
+                                  ),
+                                ),
+                              ),
+                              onPressed: isAlreadyPlaced ? null : () => _onTaskTapped(task),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(task.icon, size: 24),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    task.label,
+                                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompletionScreen() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.celebration, size: 80, color: Colors.amber),
+            const SizedBox(height: 20),
+            const Text(
+              'Wonderful Job!',
+              style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.teal),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'You sorted all the tasks perfectly!',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 20, color: Colors.black54),
+            ),
+            const SizedBox(height: 30),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.amber.shade200, width: 2),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.star, color: Colors.amber, size: 32),
+                  const SizedBox(width: 12),
+                  Text(
+                    '+10 Points!',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.amber.shade800),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 40),
+            SizedBox(
+              width: double.infinity,
+              height: 60,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  elevation: 4,
+                ),
+                onPressed: _playAgain,
+                child: const Text(
+                  'Play Again',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 60,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.teal,
+                  side: const BorderSide(color: Colors.teal, width: 2),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                ),
+                onPressed: () => Navigator.pop(context),
+                child: const Text(
+                  'Back to Games',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class DailyTaskItem {
+  final String label;
+  final IconData icon;
+
+  DailyTaskItem({required this.label, required this.icon});
+}
+
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+//////       VERBAL FLUENCY GAME               //////
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+
+class VerbalFluencyGame extends StatefulWidget {
+  const VerbalFluencyGame({super.key});
+
+  @override
+  State<VerbalFluencyGame> createState() => _VerbalFluencyGameState();
+}
+
+class _VerbalFluencyGameState extends State<VerbalFluencyGame> {
+  int _currentCategoryIndex = 0;
+  bool _roundComplete = false;
+  bool _showingHint = false;
+
+  late List<_CategoryRound> _rounds;
+  late _CategoryRound _currentRound;
+  final Set<String> _selectedCorrect = {};
+  final Set<String> _tappedWrong = {};
+
+  final List<String> _encouragingMessages = [
+    "Wonderful! You found one! 🌟",
+    "That's right! Keep going! ✨",
+    "Beautiful! You're doing so well! 🌻",
+    "Excellent memory! 🎉",
+    "Perfect! That belongs here! 👏",
+  ];
+
+  final List<String> _gentleMessages = [
+    "Almost! That one doesn't belong in this group. Let's try another. 🤗",
+    "Not quite — but that's okay! Pick a different one. 💛",
+    "Good try! See if you can find one that fits better. ☀️",
+    "That doesn't belong here, but you're doing great! 🌸",
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _initRounds();
+    _currentRound = _rounds[_currentCategoryIndex];
+  }
+
+  void _initRounds() {
+    _rounds = [
+      _CategoryRound(
+        category: 'Things found in a kitchen',
+        icon: Icons.kitchen,
+        correct: ['Spoon', 'Frying Pan', 'Plates', 'Cup'],
+        distractors: ['Shoes', 'Umbrella', 'Book', 'Scarf'],
+      ),
+      _CategoryRound(
+        category: 'Types of fruit',
+        icon: Icons.apple,
+        correct: ['Apple', 'Banana', 'Mango', 'Orange'],
+        distractors: ['Chair', 'Spoon', 'Pillow', 'Hat'],
+      ),
+      _CategoryRound(
+        category: 'Animals',
+        icon: Icons.pets,
+        correct: ['Dog', 'Cat', 'Elephant', 'Parrot'],
+        distractors: ['Table', 'Shoe', 'Lamp', 'Window'],
+      ),
+      _CategoryRound(
+        category: 'Things to wear',
+        icon: Icons.checkroom,
+        correct: ['Shirt', 'Sandals', 'Hat', 'Scarf'],
+        distractors: ['Spoon', 'Chair', 'Clock', 'Lamp'],
+      ),
+      _CategoryRound(
+        category: 'Things in a bathroom',
+        icon: Icons.bathtub,
+        correct: ['Soap', 'Toothbrush', 'Towel', 'Mirror'],
+        distractors: ['Apple', 'Bicycle', 'Tree', 'Book'],
+      ),
+      _CategoryRound(
+        category: 'Colours',
+        icon: Icons.palette,
+        correct: ['Red', 'Blue', 'Green', 'Yellow'],
+        distractors: ['Spoon', 'Chair', 'Cloud', 'Stone'],
+      ),
+      _CategoryRound(
+        category: 'Things you eat for breakfast',
+        icon: Icons.free_breakfast,
+        correct: ['Eggs', 'Toast', 'Milk', 'Cereal'],
+        distractors: ['Shirt', 'Carpet', 'Clock', 'Door'],
+      ),
+      _CategoryRound(
+        category: 'Things found in a garden',
+        icon: Icons.local_florist,
+        correct: ['Flowers', 'Grass', 'Tree', 'Bench'],
+        distractors: ['Fork', 'Pillow', 'Shoe', 'Pen'],
+      ),
+    ];
+    _rounds.shuffle();
+  }
+
+  void _onOptionTapped(String word) {
+    if (_roundComplete) return;
+    if (_selectedCorrect.contains(word)) return;
+    if (_tappedWrong.contains(word)) return;
+
+    if (_currentRound.correct.contains(word)) {
+      setState(() {
+        _selectedCorrect.add(word);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _encouragingMessages[DateTime.now().millisecond % _encouragingMessages.length],
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+          ),
+          backgroundColor: Colors.green.shade600,
+          duration: const Duration(seconds: 2),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+
+      if (_selectedCorrect.length == _currentRound.correct.length) {
+        setState(() => _roundComplete = true);
+        _saveScore();
+      }
+    } else {
+      setState(() => _tappedWrong.add(word));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _gentleMessages[DateTime.now().millisecond % _gentleMessages.length],
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+          ),
+          backgroundColor: Colors.teal.shade400,
+          duration: const Duration(seconds: 3),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    }
+  }
+
+  void _showAllAnswers() {
+    setState(() => _showingHint = true);
+  }
+
+  void _nextCategory() {
+    setState(() {
+      _currentCategoryIndex = (_currentCategoryIndex + 1) % _rounds.length;
+      _currentRound = _rounds[_currentCategoryIndex];
+      _selectedCorrect.clear();
+      _tappedWrong.clear();
+      _roundComplete = false;
+      _showingHint = false;
+    });
+  }
+
+  Future<void> _saveScore() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('sqlite_user_id') ?? "";
+    if (userId.isNotEmpty) {
+      await ScoreService().recordActivity(userId: userId, earnedPoints: 10);
+    }
+  }
+
+  List<String> _getShuffledOptions() {
+    final allOptions = [..._currentRound.correct, ..._currentRound.distractors];
+    allOptions.shuffle();
+    return allOptions;
+  }
+
+  Color _getButtonColor(String word) {
+    if (_selectedCorrect.contains(word)) return Colors.green.shade100;
+    if (_showingHint && _currentRound.correct.contains(word)) return Colors.green.shade50;
+    if (_tappedWrong.contains(word)) return Colors.orange.shade50;
+    return Colors.white;
+  }
+
+  Color _getButtonBorder(String word) {
+    if (_selectedCorrect.contains(word)) return Colors.green;
+    if (_showingHint && _currentRound.correct.contains(word)) return Colors.green.shade300;
+    if (_tappedWrong.contains(word)) return Colors.orange.shade300;
+    return Colors.teal.shade200;
+  }
+
+  Color _getButtonTextColor(String word) {
+    if (_selectedCorrect.contains(word)) return Colors.green.shade800;
+    if (_showingHint && _currentRound.correct.contains(word)) return Colors.green.shade700;
+    if (_tappedWrong.contains(word)) return Colors.orange.shade700;
+    return Colors.teal.shade800;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final options = _getShuffledOptions();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Verbal Fluency'),
+        centerTitle: true,
+        actions: [
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: Row(
+                children: [
+                  const Icon(Icons.star, color: Colors.amber, size: 24),
+                  const SizedBox(width: 4),
+                  Text('${_currentCategoryIndex + 1}/${_rounds.length}',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Category prompt card
+            Card(
+              elevation: 3,
+              color: Colors.teal.shade50,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  children: [
+                    Icon(_currentRound.icon, size: 48, color: Colors.teal.shade700),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Which of these are',
+                      style: TextStyle(fontSize: 18, color: Colors.teal.shade600),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _currentRound.category,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.teal,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_selectedCorrect.length} of ${_currentRound.correct.length} found',
+                      style: TextStyle(fontSize: 16, color: Colors.teal.shade500),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Progress dots
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_currentRound.correct.length, (index) {
+                bool filled = index < _selectedCorrect.length;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: Icon(
+                    filled ? Icons.check_circle : Icons.radio_button_unchecked,
+                    color: filled ? Colors.green : Colors.teal.shade200,
+                    size: 28,
+                  ),
+                );
+              }),
+            ),
+            const SizedBox(height: 16),
+
+            // Option buttons grid
+            Expanded(
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: 2.2,
+                ),
+                itemCount: options.length,
+                itemBuilder: (context, index) {
+                  final word = options[index];
+                  final bool isSelected = _selectedCorrect.contains(word);
+                  final bool isWrongTap = _tappedWrong.contains(word);
+                  final bool isHinted = _showingHint && _currentRound.correct.contains(word);
+
+                  return SizedBox(
+                    height: 60,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _getButtonColor(word),
+                        foregroundColor: _getButtonTextColor(word),
+                        elevation: isSelected ? 1 : 3,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          side: BorderSide(
+                            color: _getButtonBorder(word),
+                            width: isSelected || isHinted ? 3 : 2,
+                          ),
+                        ),
+                      ),
+                      onPressed: isSelected ? null : () => _onOptionTapped(word),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (isSelected) ...[
+                            const Icon(Icons.check_circle, color: Colors.green, size: 22),
+                            const SizedBox(width: 8),
+                          ] else if (isHinted) ...[
+                            Icon(Icons.lightbulb, color: Colors.green.shade400, size: 22),
+                            const SizedBox(width: 8),
+                          ] else if (isWrongTap) ...[
+                            Icon(Icons.help_outline, color: Colors.orange.shade400, size: 22),
+                            const SizedBox(width: 8),
+                          ],
+                          Text(
+                            word,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              decoration: isWrongTap ? TextDecoration.lineThrough : null,
+                              decorationColor: Colors.orange.shade300,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Hint button (only show if not all found and not already showing hint)
+            if (!_roundComplete && !_showingHint)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: TextButton(
+                  onPressed: _showAllAnswers,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.teal.shade600,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(
+                    'Show me a hint 💡',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: Colors.teal.shade600),
+                  ),
+                ),
+              ),
+
+            // Round complete — show success and next button
+            if (_roundComplete)
+              Card(
+                elevation: 2,
+                color: Colors.green.shade50,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                child: Padding(
+                  padding: const EdgeInsets.all(20.0),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.celebration, size: 48, color: Colors.amber),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Wonderful job!',
+                        style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.green),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'You found all the ${_currentRound.category.toLowerCase()}! 🌟',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 18, color: Colors.green.shade700),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          ),
+                          onPressed: _nextCategory,
+                          child: const Text(
+                            'Next Category →',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryRound {
+  final String category;
+  final IconData icon;
+  final List<String> correct;
+  final List<String> distractors;
+
+  _CategoryRound({
+    required this.category,
+    required this.icon,
+    required this.correct,
+    required this.distractors,
+  });
+}
+
+
 ////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////
 
@@ -2657,6 +3665,9 @@ class MusicLibraryScreen extends StatelessWidget {
           }),
           _buildMusicCard(context, 'Song Recognition', Icons.quiz, Colors.orange, () {
             Navigator.push(context, MaterialPageRoute(builder: (_) => const SongRecognitionScreen()));
+          }),
+          _buildMusicCard(context, 'Regional Music', Icons.album, Colors.deepPurple, () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const RegionalMusicScreen()));
           }),
         ],
       ),
@@ -3250,6 +4261,708 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+//////       REGIONAL NOSTALGIC MUSIC           //////
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+// --- Data Model for Regional Songs ---
+
+enum NEState {
+  assam, meghalaya, manipur, mizoram, nagaland, tripura, arunachalPradesh, sikkim
+}
+
+class RegionalSong {
+  final String title;
+  final String artist;
+  final String era;
+  final String description;
+  final String audioPath; // unique audio asset path per song
+
+  RegionalSong({
+    required this.title,
+    required this.artist,
+    required this.era,
+    required this.description,
+    required this.audioPath,
+  });
+}
+
+class NEStateInfo {
+  final NEState state;
+  final String displayName;
+  final String description;
+  final IconData icon;
+  final Color color;
+  final List<RegionalSong> songs;
+
+  NEStateInfo({
+    required this.state,
+    required this.displayName,
+    required this.description,
+    required this.icon,
+    required this.color,
+    required this.songs,
+  });
+}
+
+// --- Regional Song Database (1960s-1970s nostalgic folk) ---
+
+final List<NEStateInfo> neStatesData = [
+  // ========== ASSAM ==========
+  NEStateInfo(
+    state: NEState.assam,
+    displayName: 'Assam',
+    description: 'Traditional Bihu songs, Tokari Geet, Goalpariya Lokogeet & Bodo folk tunes',
+    icon: Icons.terrain,
+    color: Colors.green,
+    songs: [
+      RegionalSong(title: 'Bihu Naam - Spring Harvest Song', artist: 'Traditional Bihu Folk', era: '1965', description: 'Classic Bihu dance song celebrating the spring harvest festival', audioPath: 'audio/regional/assam/bihu_naam_spring_harvest.mp3'),
+      RegionalSong(title: 'Tokari Geet - Devotional Ballad', artist: 'Assamese Folk Artists', era: '1962', description: 'Traditional Tokari song with ektara accompaniment', audioPath: 'audio/regional/assam/tokari_geet_devotional.mp3'),
+      RegionalSong(title: 'Goalpariya Lokogeet - Boatman\'s Song', artist: 'Goalpara Region Folk', era: '1968', description: 'Melodious river song from the Goalpara district', audioPath: 'audio/regional/assam/goalpariya_lokogeet_boatman.mp3'),
+      RegionalSong(title: 'Bodo Bwisagu Folk Tune', artist: 'Bodo Tribal Artists', era: '1966', description: 'Traditional Bwisagu festival song of the Bodo people', audioPath: 'audio/regional/assam/bodo_bwisagu_folk.mp3'),
+      RegionalSong(title: 'Jhumur Nritya Geet', artist: 'Tea Garden Folk', era: '1970', description: 'Rhythmic Jhumur dance song from Assam\'s tea gardens', audioPath: 'audio/regional/assam/jhumur_nritya_geet.mp3'),
+      RegionalSong(title: 'Ojapali Traditional Chant', artist: 'Assamese Traditional', era: '1963', description: 'Ancient Ojapali narrative folk performance', audioPath: 'audio/regional/assam/ojapali_traditional_chant.mp3'),
+    ],
+  ),
+  // ========== MEGHALAYA ==========
+  NEStateInfo(
+    state: NEState.meghalaya,
+    displayName: 'Meghalaya',
+    description: 'Khasi & Garo folk songs, traditional Phawar & Wangala rhythms',
+    icon: Icons.cloud,
+    color: Colors.blue,
+    songs: [
+      RegionalSong(title: 'Phawar - Khasi Love Ballad', artist: 'Khasi Folk Tradition', era: '1964', description: 'Traditional poetic folk song of the Khasi hills', audioPath: 'audio/regional/meghalaya/phawar_khasi_love_ballad.mp3'),
+      RegionalSong(title: 'Wangala Drum Song', artist: 'Garo Tribal Artists', era: '1967', description: 'Harvest festival song of the Garo tribe with traditional drums', audioPath: 'audio/regional/meghalaya/wangala_drum_song.mp3'),
+      RegionalSong(title: 'Laho Dance Folk Tune', artist: 'Khasi Youth Folk', era: '1969', description: 'Lively group dance song from Shillong hills', audioPath: 'audio/regional/meghalaya/laho_dance_folk.mp3'),
+      RegionalSong(title: 'Doregala - Garo Lullaby', artist: 'Garo Mothers\' Folk', era: '1961', description: 'Gentle lullaby passed down through Garo generations', audioPath: 'audio/regional/meghalaya/doregala_garo_lullaby.mp3'),
+      RegionalSong(title: 'Nongkrem Festival Song', artist: 'Khasi Traditional', era: '1966', description: 'Sacred song from the Nongkrem harvest thanksgiving', audioPath: 'audio/regional/meghalaya/nongkrem_festival_song.mp3'),
+    ],
+  ),
+  // ========== MANIPUR ==========
+  NEStateInfo(
+    state: NEState.manipur,
+    displayName: 'Manipur',
+    description: 'Lai Haraoba folk songs, Khullang Eshei & Pena-accompanied tracks',
+    icon: Icons.sports_soccer,
+    color: Colors.orange,
+    songs: [
+      RegionalSong(title: 'Lai Haraoba Ritual Song', artist: 'Meitei Traditional', era: '1963', description: 'Ancient ritualistic folk song from Lai Haraoba festival', audioPath: 'audio/regional/manipur/lai_haraoba_ritual_song.mp3'),
+      RegionalSong(title: 'Khullang Eshei - Martial Ballad', artist: 'Manipuri Folk', era: '1965', description: 'Traditional heroic ballad celebrating martial arts', audioPath: 'audio/regional/manipur/khullang_eshei_martial.mp3'),
+      RegionalSong(title: 'Pena Eshei - Lute Song', artist: 'Pena Folk Artists', era: '1968', description: 'Accompanied by the traditional Pena stringed instrument', audioPath: 'audio/regional/manipur/pena_eshei_lute_song.mp3'),
+      RegionalSong(title: 'Nupa Pala - Dance Song', artist: 'Manipuri Classical Folk', era: '1962', description: 'Ras Lila inspired folk dance composition', audioPath: 'audio/regional/manipur/nupa_pala_dance_song.mp3'),
+      RegionalSong(title: 'Thabal Chongba Moon Dance', artist: 'Meitei Youth Folk', era: '1970', description: 'Full moon festival dance song of the Meitei community', audioPath: 'audio/regional/manipur/thabal_chongba_moon_dance.mp3'),
+    ],
+  ),
+  // ========== MIZORAM ==========
+  NEStateInfo(
+    state: NEState.mizoram,
+    displayName: 'Mizoram',
+    description: 'Traditional Lengzem, Cheraw drum/gong folk rhythms',
+    icon: Icons.park,
+    color: Colors.purple,
+    songs: [
+      RegionalSong(title: 'Cheraw Bamboo Dance Rhythm', artist: 'Mizo Traditional', era: '1964', description: 'Accompaniment for the famous Cheraw bamboo dance', audioPath: 'audio/regional/mizoram/cheraw_bamboo_dance.mp3'),
+      RegionalSong(title: 'Lengzem - Mizo Folk Ballad', artist: 'Mizo Folk Artists', era: '1967', description: 'Traditional Lengzem narrative folk song', audioPath: 'audio/regional/mizoram/lengzem_folk_ballad.mp3'),
+      RegionalSong(title: 'Chai Lam - Celebration Song', artist: 'Mizo Community', era: '1969', description: 'Joyous song for community celebrations and feasts', audioPath: 'audio/regional/mizoram/chai_lam_celebration.mp3'),
+      RegionalSong(title: 'Sap Tlang - Bamboo Grove Song', artist: 'Mizo Hill Folk', era: '1963', description: 'Nature-inspired folk tune about the bamboo forests', audioPath: 'audio/regional/mizoram/sap_tlang_bamboo_grove.mp3'),
+      RegionalSong(title: 'Chhawnghnawh - New Year Song', artist: 'Mizo Traditional', era: '1966', description: 'Traditional Pawl Kut harvest festival song', audioPath: 'audio/regional/mizoram/chhawnghnawh_new_year.mp3'),
+    ],
+  ),
+  // ========== NAGALAND ==========
+  NEStateInfo(
+    state: NEState.nagaland,
+    displayName: 'Nagaland',
+    description: 'Angami, Ao & Tenyidie traditional folk chants and songs',
+    icon: Icons.filter_hdr,
+    color: Colors.red,
+    songs: [
+      RegionalSong(title: 'Angami War Chant', artist: 'Angami Tribal', era: '1962', description: 'Traditional warrior chant of the Angami Naga', audioPath: 'audio/regional/nagaland/angami_war_chant.mp3'),
+      RegionalSong(title: 'Ao Morung Folk Song', artist: 'Ao Naga Artists', era: '1965', description: 'Song from the traditional bachelor\'s dormitory', audioPath: 'audio/regional/nagaland/ao_morung_folk_song.mp3'),
+      RegionalSong(title: 'Tenyidie Harvest Song', artist: 'Angami Folk', era: '1968', description: 'Harvest celebration song in Tenyidie language', audioPath: 'audio/regional/nagaland/tenyidie_harvest_song.mp3'),
+      RegionalSong(title: 'Sekrenyi Festival Tune', artist: 'Kohima Region Folk', era: '1964', description: 'Traditional purification festival song', audioPath: 'audio/regional/nagaland/sekrenyi_festival_tune.mp3'),
+      RegionalSong(title: 'Konyak Headhunters\' Chant', artist: 'Konyak Tribal', era: '1960', description: 'Rare recording of ancient Konyak ceremonial chant', audioPath: 'audio/regional/nagaland/konyak_headhunters_chant.mp3'),
+    ],
+  ),
+  // ========== TRIPURA ==========
+  NEStateInfo(
+    state: NEState.tripura,
+    displayName: 'Tripura',
+    description: 'Tripuri & Reang folk music, Dhamail songs',
+    icon: Icons.local_florist,
+    color: Colors.teal,
+    songs: [
+      RegionalSong(title: 'Dhamail Dance Song', artist: 'Tripuri Tribal', era: '1966', description: 'Traditional Dhamail circle dance song', audioPath: 'audio/regional/tripura/dhamail_dance_song.mp3'),
+      RegionalSong(title: 'Hojagiri Ritual Tune', artist: 'Reang Community', era: '1963', description: 'Sacred Hojagiri performance folk song', audioPath: 'audio/regional/tripura/hojagiri_ritual_tune.mp3'),
+      RegionalSong(title: 'Goria Puja Folk Song', artist: 'Tripuri Farmers', era: '1968', description: 'Agricultural festival song of the Tripuri people', audioPath: 'audio/regional/tripura/goria_puja_folk_song.mp3'),
+      RegionalSong(title: 'Maimiti - Tripuri Lullaby', artist: 'Tripuri Mothers\' Folk', era: '1961', description: 'Gentle lullaby in Kokborok language', audioPath: 'audio/regional/tripura/maimiti_tripuri_lullaby.mp3'),
+      RegionalSong(title: 'Jhum Cultivation Song', artist: 'Reang Tribal', era: '1970', description: 'Song accompanying jhum cultivation activities', audioPath: 'audio/regional/tripura/jhum_cultivation_song.mp3'),
+    ],
+  ),
+  // ========== ARUNACHAL PRADESH ==========
+  NEStateInfo(
+    state: NEState.arunachalPradesh,
+    displayName: 'Arunachal Pradesh',
+    description: 'Nyishi, Galo & Apatani traditional folk songs',
+    icon: Icons.landscape,
+    color: Colors.indigo,
+    songs: [
+      RegionalSong(title: 'Apatani Rice Song', artist: 'Apatani Tribal', era: '1964', description: 'Song accompanying paddy field cultivation', audioPath: 'audio/regional/arunachal/apatani_rice_song.mp3'),
+      RegionalSong(title: 'Nyishi Community Dance', artist: 'Nyishi Artists', era: '1967', description: 'Traditional Torgya festival community song', audioPath: 'audio/regional/arunachal/nyishi_community_dance.mp3'),
+      RegionalSong(title: 'Galo Myoko Festival Tune', artist: 'Galo Folk', era: '1969', description: 'Sacred song from the Myoko purification festival', audioPath: 'audio/regional/arunachal/galo_myoko_festival.mp3'),
+      RegionalSong(title: 'Wancho War Dance Chant', artist: 'Wancho Tribal', era: '1962', description: 'Traditional warrior dance accompaniment', audioPath: 'audio/regional/arunachal/wancho_war_dance.mp3'),
+      RegionalSong(title: 'Monpa Buddhist Chant', artist: 'Tawang Region', era: '1965', description: 'Spiritual folk chant from the Monpa community', audioPath: 'audio/regional/arunachal/monpa_buddhist_chant.mp3'),
+    ],
+  ),
+  // ========== SIKKIM ==========
+  NEStateInfo(
+    state: NEState.sikkim,
+    displayName: 'Sikkim',
+    description: 'Lepcha & Bhutia traditional folk tunes',
+    icon: Icons.ac_unit,
+    color: Colors.cyan,
+    songs: [
+      RegionalSong(title: 'Lepcha Tendong Song', artist: 'Lepcha Traditional', era: '1963', description: 'Traditional song invoking the Tendong mountain spirit', audioPath: 'audio/regional/sikkim/lepcha_tendong_song.mp3'),
+      RegionalSong(title: 'Bhutia Losar Folk Tune', artist: 'Bhutia Community', era: '1966', description: 'New Year celebration song of the Bhutia people', audioPath: 'audio/regional/sikkim/bhutia_losar_folk.mp3'),
+      RegionalSong(title: 'Chaam Dance Chant', artist: 'Sikkimese Monks', era: '1968', description: 'Sacred Buddhist masked dance accompaniment', audioPath: 'audio/regional/sikkim/chaam_dance_chant.mp3'),
+      RegionalSong(title: 'Tamang Selo Rhythm', artist: 'Tamang Folk', era: '1965', description: 'Rhythmic folk tune played on the Damphu drum', audioPath: 'audio/regional/sikkim/tamang_selo_rhythm.mp3'),
+      RegionalSong(title: 'Limbu Mundhum Chant', artist: 'Limbu Tribal', era: '1961', description: 'Ancient creation myth recitation of the Limbu people', audioPath: 'audio/regional/sikkim/limbu_mundhum_chant.mp3'),
+    ],
+  ),
+];
+
+
+// --- REGIONAL MUSIC SELECTION SCREEN ---
+
+class RegionalMusicScreen extends StatelessWidget {
+  const RegionalMusicScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Regional Nostalgic Music'),
+        centerTitle: true,
+        backgroundColor: Colors.deepPurple,
+      ),
+      body: Column(
+        children: [
+          // Header card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            color: Colors.deepPurple.shade50,
+            child: Column(
+              children: [
+                Icon(Icons.album, size: 48, color: Colors.deepPurple.shade300),
+                const SizedBox(height: 8),
+                const Text(
+                  'Nostalgic Folk Music from\nNortheast India',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.deepPurple),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Vintage recordings from the 1960s–1970s era',
+                  style: TextStyle(fontSize: 14, color: Colors.deepPurple.shade300),
+                ),
+              ],
+            ),
+          ),
+
+          // State list
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: neStatesData.length,
+              itemBuilder: (context, index) {
+                final stateInfo = neStatesData[index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Card(
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      leading: CircleAvatar(
+                        radius: 28,
+                        backgroundColor: stateInfo.color.withValues(alpha: 0.15),
+                        child: Icon(stateInfo.icon, color: stateInfo.color, size: 30),
+                      ),
+                      title: Text(
+                        stateInfo.displayName,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                      ),
+                      subtitle: Text(
+                        '${stateInfo.songs.length} vintage tracks',
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                      ),
+                      trailing: Icon(Icons.arrow_forward_ios, color: stateInfo.color, size: 20),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => StateFolkListScreen(stateInfo: stateInfo),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// --- STATE FOLK LIST SCREEN ---
+
+class StateFolkListScreen extends StatelessWidget {
+  final NEStateInfo stateInfo;
+
+  const StateFolkListScreen({super.key, required this.stateInfo});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('${stateInfo.displayName} Folk Music'),
+        centerTitle: true,
+        backgroundColor: stateInfo.color,
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // State header
+          Container(
+            padding: const EdgeInsets.all(20),
+            color: stateInfo.color.withValues(alpha: 0.08),
+            child: Column(
+              children: [
+                Icon(stateInfo.icon, size: 48, color: stateInfo.color),
+                const SizedBox(height: 8),
+                Text(
+                  stateInfo.displayName,
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: stateInfo.color),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  stateInfo.description,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+
+          // Song list
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: stateInfo.songs.length,
+              itemBuilder: (context, index) {
+                final song = stateInfo.songs[index];
+                return Card(
+                  elevation: 2,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    leading: Container(
+                      width: 50,
+                      height: 50,
+                      decoration: BoxDecoration(
+                        color: stateInfo.color.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(Icons.audiotrack, color: stateInfo.color, size: 28),
+                    ),
+                    title: Text(
+                      song.title,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 2),
+                        Text(song.artist, style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+                        Text('${song.era} · ${song.description}', style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+                      ],
+                    ),
+                    isThreeLine: true,
+                    trailing: Icon(Icons.play_circle_fill, color: stateInfo.color, size: 36),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => RegionalAudioPlayerScreen(
+                            song: song,
+                            stateInfo: stateInfo,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// --- DEMENTIA-FRIENDLY REGIONAL AUDIO PLAYER ---
+
+class RegionalAudioPlayerScreen extends StatefulWidget {
+  final RegionalSong song;
+  final NEStateInfo stateInfo;
+
+  const RegionalAudioPlayerScreen({
+    super.key,
+    required this.song,
+    required this.stateInfo,
+  });
+
+  @override
+  State<RegionalAudioPlayerScreen> createState() => _RegionalAudioPlayerScreenState();
+}
+
+class _RegionalAudioPlayerScreenState extends State<RegionalAudioPlayerScreen> {
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  bool _isPlaying = false;
+  bool _isLooping = false;
+  Duration _currentPosition = Duration.zero;
+  Duration _totalDuration = const Duration(minutes: 3, seconds: 30);
+  int _loopCount = 0;
+  DateTime? _playStartTime;
+  int _totalListeningSeconds = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _audioPlayer.onPlayerStateChanged.listen((state) {
+      if (mounted) {
+        setState(() => _isPlaying = state == PlayerState.playing);
+        if (state == PlayerState.playing && _playStartTime == null) {
+          _playStartTime = DateTime.now();
+        }
+        if (state == PlayerState.completed) {
+          _loopCount++;
+          _trackListeningTime();
+          if (_isLooping) {
+            _audioPlayer.play(AssetSource(widget.song.audioPath));
+          }
+        }
+      }
+    });
+
+    _audioPlayer.onDurationChanged.listen((duration) {
+      if (mounted) setState(() => _totalDuration = duration);
+    });
+
+    _audioPlayer.onPositionChanged.listen((position) {
+      if (mounted) setState(() => _currentPosition = position);
+    });
+  }
+
+  void _trackListeningTime() {
+    if (_playStartTime != null) {
+      _totalListeningSeconds += DateTime.now().difference(_playStartTime!).inSeconds;
+      _playStartTime = DateTime.now();
+    }
+  }
+
+  @override
+  void dispose() {
+    _trackListeningTime();
+    _savePlayLog();
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _savePlayLog() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('sqlite_user_id') ?? "";
+    if (userId.isNotEmpty && _totalListeningSeconds > 0) {
+      await DatabaseHelper.instance.insertRegionalMusicPlay(
+        userId: userId,
+        stateName: widget.stateInfo.displayName,
+        songTitle: widget.song.title,
+        durationSeconds: _totalListeningSeconds,
+        loopCount: _loopCount,
+        emotionalState: _predictEmotionalState(),
+        cognitiveResponse: _predictCognitiveResponse(),
+      );
+    }
+  }
+
+  String _predictEmotionalState() {
+    // Simple heuristic-based prediction (ML service would enhance this)
+    if (_totalListeningSeconds > 120 && _loopCount >= 2) {
+      return 'Deep Reminiscence & Nostalgic Joy';
+    } else if (_totalListeningSeconds > 60 && _loopCount >= 1) {
+      return 'Calm & Engaged';
+    } else if (_totalListeningSeconds > 30) {
+      return 'Relaxed Listening';
+    }
+    return 'Initial Exploration';
+  }
+
+  String _predictCognitiveResponse() {
+    if (_loopCount >= 3) return 'Strong Emotional Resonance - Fixation Detected';
+    if (_loopCount >= 1) return 'Active Engagement & Memory Association';
+    if (_totalListeningSeconds > 60) return 'Sustained Attention & Cognitive Focus';
+    return 'Processing New Stimulus';
+  }
+
+  String _formatDuration(Duration d) {
+    String minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    String seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  Future<void> _togglePlay() async {
+    if (_isPlaying) {
+      await _audioPlayer.pause();
+      _trackListeningTime();
+    } else {
+      try {
+        await _audioPlayer.play(AssetSource(widget.song.audioPath));
+        _playStartTime ??= DateTime.now();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Audio file not found. Place the .mp3 at:\n${widget.song.audioPath}'),
+              backgroundColor: Colors.teal.shade400,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  void _toggleLoop() {
+    setState(() => _isLooping = !_isLooping);
+    _audioPlayer.setReleaseMode(_isLooping ? ReleaseMode.loop : ReleaseMode.release);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Now Playing'),
+        centerTitle: true,
+        backgroundColor: widget.stateInfo.color,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Album art placeholder
+            Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.stateInfo.color.withValues(alpha: 0.1),
+                boxShadow: [
+                  BoxShadow(
+                    color: widget.stateInfo.color.withValues(alpha: 0.2),
+                    blurRadius: 20,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: Icon(
+                widget.stateInfo.icon,
+                size: 80,
+                color: widget.stateInfo.color,
+              ),
+            ),
+            const SizedBox(height: 30),
+
+            // Song title
+            Text(
+              widget.song.title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+
+            // Artist & state
+            Text(
+              widget.song.artist,
+              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: widget.stateInfo.color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                '${widget.stateInfo.displayName} · ${widget.song.era}',
+                style: TextStyle(fontSize: 13, color: widget.stateInfo.color, fontWeight: FontWeight.w500),
+              ),
+            ),
+            const SizedBox(height: 30),
+
+            // Progress bar
+            Column(
+              children: [
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 8,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
+                    activeTrackColor: widget.stateInfo.color,
+                    inactiveTrackColor: widget.stateInfo.color.withValues(alpha: 0.2),
+                    thumbColor: widget.stateInfo.color,
+                  ),
+                  child: Slider(
+                    value: _currentPosition.inSeconds.toDouble(),
+                    max: _totalDuration.inSeconds.toDouble().clamp(1, double.infinity),
+                    onChanged: (value) {
+                      _audioPlayer.seek(Duration(seconds: value.toInt()));
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(_formatDuration(_currentPosition), style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
+                      Text(_formatDuration(_totalDuration), style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Play/Pause - large target
+            SizedBox(
+              width: 80,
+              height: 80,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  shape: const CircleBorder(),
+                  backgroundColor: widget.stateInfo.color,
+                  elevation: 6,
+                ),
+                onPressed: _togglePlay,
+                child: Icon(
+                  _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 40,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Loop toggle - large target
+            SizedBox(
+              width: 64,
+              height: 64,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  shape: const CircleBorder(),
+                  backgroundColor: _isLooping ? widget.stateInfo.color.withValues(alpha: 0.2) : Colors.grey.shade200,
+                  elevation: 2,
+                ),
+                onPressed: _toggleLoop,
+                child: Icon(
+                  Icons.repeat,
+                  color: _isLooping ? widget.stateInfo.color : Colors.grey,
+                  size: 30,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _isLooping ? 'Looping On' : 'Loop Off',
+              style: TextStyle(
+                fontSize: 14,
+                color: _isLooping ? widget.stateInfo.color : Colors.grey,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 30),
+
+            // Listening stats card
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  children: [
+                    Text(
+                      'Listening Session',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: widget.stateInfo.color),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildStat('Duration', '${_totalListeningSeconds}s', Icons.timer),
+                        _buildStat('Loops', '$_loopCount', Icons.repeat),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Gentle description
+            Card(
+              color: Colors.amber.shade50,
+              elevation: 1,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(14.0),
+                child: Text(
+                  widget.song.description,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStat(String label, String value, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon, color: widget.stateInfo.color, size: 24),
+        const SizedBox(height: 4),
+        Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+      ],
     );
   }
 }
@@ -5135,6 +6848,9 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
                 _buildCaregiverCard('Settings', Icons.settings, Colors.blueGrey, onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
                 }),
+                _buildCaregiverCard('Music Insights', Icons.album, Colors.deepPurple, onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CaregiverMusicInsightsScreen()));
+                }),
               ],
             ),
           ],
@@ -5166,6 +6882,258 @@ class _CaregiverDashboardState extends State<CaregiverDashboard> {
 }
 
 ////////////////////////////////////////////////
+////////////////////////////////////////////////
+///      CAREGIVER MUSIC INSIGHTS            ///
+////////////////////////////////////////////////
+////////////////////////////////////////////////
+
+class CaregiverMusicInsightsScreen extends StatefulWidget {
+  const CaregiverMusicInsightsScreen({super.key});
+
+  @override
+  State<CaregiverMusicInsightsScreen> createState() => _CaregiverMusicInsightsScreenState();
+}
+
+class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScreen> {
+  List<Map<String, dynamic>> linkedPatients = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPatients();
+  }
+
+  Future<void> _loadPatients() async {
+    final prefs = await SharedPreferences.getInstance();
+    final caregiverId = prefs.getString('sqlite_user_id') ?? "";
+    if (caregiverId.isNotEmpty) {
+      final patients = await DatabaseHelper.instance.getPatientsForCaregiver(caregiverId);
+      setState(() => linkedPatients = patients);
+    }
+    setState(() => isLoading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Music & Mood Insights'),
+        centerTitle: true,
+        backgroundColor: Colors.deepPurple,
+      ),
+      body: linkedPatients.isEmpty
+          ? const Center(
+              child: Text(
+                'No patients linked yet.\nAdd patients from the dashboard to view their music insights.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: linkedPatients.length,
+              itemBuilder: (context, index) {
+                final patient = linkedPatients[index];
+                return _buildPatientInsightCard(patient);
+              },
+            ),
+    );
+  }
+
+  Widget _buildPatientInsightCard(Map<String, dynamic> patient) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: DatabaseHelper.instance.getRegionalMusicSummary(patient['user_id']),
+      builder: (context, snapshot) {
+        final summary = snapshot.data ?? {};
+        final totalDuration = summary['total_duration_seconds'] as int? ?? 0;
+        final totalLoops = summary['total_loops'] as int? ?? 0;
+        final mostPlayed = summary['most_played_state'] as String? ?? 'None';
+        final stateDurations = Map<String, int>.from(summary['state_durations'] as Map? ?? {});
+        final stateLoops = Map<String, int>.from(summary['state_loops'] as Map? ?? {});
+
+        String durationFormatted = '';
+        if (totalDuration >= 60) {
+          durationFormatted = '${(totalDuration / 60).floor()} min ${totalDuration % 60}s';
+        } else {
+          durationFormatted = '$totalDuration seconds';
+        }
+
+        return Card(
+          elevation: 3,
+          margin: const EdgeInsets.only(bottom: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Patient header
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Colors.deepPurple.shade50,
+                      child: const Icon(Icons.person, color: Colors.deepPurple, size: 28),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(patient['name'] ?? 'Patient',
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text('ID: ${patient['registration_number'] ?? "-"}',
+                            style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(height: 24),
+
+                // Summary stats
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildInsightStat('Total Time', durationFormatted, Icons.timer, Colors.teal),
+                    _buildInsightStat('Loops', '$totalLoops', Icons.repeat, Colors.orange),
+                    _buildInsightStat('Tracks', '${summary['total_plays'] ?? 0}', Icons.audiotrack, Colors.blue),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Most played state
+                if (mostPlayed != 'None')
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.deepPurple.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.favorite, color: Colors.deepPurple, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Most Played: $mostPlayed',
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.deepPurple),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Per-state breakdown
+                if (stateDurations.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text('Listening by Region:',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+                  const SizedBox(height: 8),
+                  ...stateDurations.entries.map((entry) {
+                    int dur = entry.value;
+                    int loops = stateLoops[entry.key] ?? 0;
+                    String durStr = dur >= 60 ? '${(dur / 60).floor()}m ${dur % 60}s' : '${dur}s';
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6.0),
+                      child: Row(
+                        children: [
+                          Icon(Icons.circle, size: 8, color: Colors.deepPurple.shade300),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text('${entry.key}', style: const TextStyle(fontSize: 14)),
+                          ),
+                          Text('$durStr · Looped $loops x',
+                            style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+
+                // Cognitive insight
+                const SizedBox(height: 12),
+                _buildCognitiveInsightCard(totalDuration, totalLoops),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildInsightStat(String label, String value, IconData icon, Color color) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 24),
+        const SizedBox(height: 4),
+        Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+      ],
+    );
+  }
+
+  Widget _buildCognitiveInsightCard(int totalDuration, int totalLoops) {
+    String moodIndicator;
+    String moodEmoji;
+    Color moodColor;
+
+    if (totalLoops >= 5 && totalDuration > 300) {
+      moodIndicator = 'Strong Emotional Resonance';
+      moodEmoji = '🌟';
+      moodColor = Colors.amber;
+    } else if (totalLoops >= 2 && totalDuration > 120) {
+      moodIndicator = 'Active Engagement & Reminiscence';
+      moodEmoji = '🎶';
+      moodColor = Colors.teal;
+    } else if (totalDuration > 60) {
+      moodIndicator = 'Calm & Relaxed Listening';
+      moodEmoji = '😌';
+      moodColor = Colors.blue;
+    } else if (totalDuration > 0) {
+      moodIndicator = 'Initial Exploration';
+      moodEmoji = '🎵';
+      moodColor = Colors.purple;
+    } else {
+      moodIndicator = 'No listening data yet';
+      moodEmoji = '🎶';
+      moodColor = Colors.grey;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: moodColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: moodColor.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Text(moodEmoji, style: const TextStyle(fontSize: 28)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Cognitive-Emotional Insight',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                Text(moodIndicator,
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: moodColor)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
 ////////////////////////////////////////////////
 ///           MY PATIENT SCREEN              ///
 ////////////////////////////////////////////////
@@ -5355,6 +7323,9 @@ class VoiceAssistantService {
     }
     if (text.contains('pattern') || text.contains('প্যাটার্ন') || text.contains('रंग')) {
       return 'start_pattern_game';
+    }
+    if (text.contains('task') || text.contains('sequence') || text.contains('order') || text.contains('দৈনিক') || text.contains('क्रम')) {
+      return 'start_task_sequencer';
     }
     if (text.contains('music') || text.contains('গান') || text.contains('संगीत')) {
       return 'open_music';

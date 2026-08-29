@@ -73,6 +73,14 @@ flutter:
   
   assets:
     - assets/audio/
+    - assets/audio/regional/assam/
+    - assets/audio/regional/meghalaya/
+    - assets/audio/regional/manipur/
+    - assets/audio/regional/mizoram/
+    - assets/audio/regional/nagaland/
+    - assets/audio/regional/tripura/
+    - assets/audio/regional/arunachal/
+    - assets/audio/regional/sikkim/
     - assets/images/
     - assets/translations/
   # To add assets to your application, add an assets section, like this:

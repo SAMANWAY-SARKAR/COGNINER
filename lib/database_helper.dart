@@ -107,6 +107,21 @@ class DatabaseHelper {
         FOREIGN KEY (user_id) REFERENCES patients(user_id) ON DELETE CASCADE
       )
     ''');
+    await db.execute('''
+      CREATE TABLE regional_music_plays (
+        play_id                TEXT PRIMARY KEY,
+        user_id                TEXT NOT NULL,
+        state_name             TEXT NOT NULL,
+        song_title             TEXT NOT NULL,
+        duration_seconds       INTEGER DEFAULT 0,
+        loop_count             INTEGER DEFAULT 0,
+        emotional_state        TEXT,
+        cognitive_response     TEXT,
+        timestamp              DATETIME DEFAULT CURRENT_TIMESTAMP,
+        synced                 INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES patients(user_id) ON DELETE CASCADE
+      )
+    ''');
   }
 
   Future<String> insertPatient({
@@ -319,5 +334,79 @@ class DatabaseHelper {
   Future<void> markMusicSessionSynced(String sessionId) async {
     if (kIsWeb) { final idx = _webMusicSessions.indexWhere((s) => s['session_id'] == sessionId); if (idx != -1) _webMusicSessions[idx]['synced'] = 1; return; }
     final db = await database; await db!.update('music_sessions', {'synced': 1}, where: 'synced = ?', whereArgs: [sessionId]);
+  }
+
+  // --- REGIONAL MUSIC PLAYS ---
+  Future<void> insertRegionalMusicPlay({
+    required String userId,
+    required String stateName,
+    required String songTitle,
+    required int durationSeconds,
+    required int loopCount,
+    String? emotionalState,
+    String? cognitiveResponse,
+  }) async {
+    final id = _uuid.v4();
+    final data = {
+      'play_id': id,
+      'user_id': userId,
+      'state_name': stateName,
+      'song_title': songTitle,
+      'duration_seconds': durationSeconds,
+      'loop_count': loopCount,
+      'emotional_state': emotionalState,
+      'cognitive_response': cognitiveResponse,
+      'synced': 0,
+    };
+    if (kIsWeb) { _webMusicSessions.add(data); return; }
+    final db = await database; await db!.insert('regional_music_plays', data);
+  }
+
+  Future<List<Map<String, dynamic>>> getRegionalMusicPlays(String userId) async {
+    if (kIsWeb) return _webMusicSessions.where((s) => s['user_id'] == userId).toList();
+    final db = await database;
+    return await db!.query('regional_music_plays', where: 'user_id = ?', whereArgs: [userId], orderBy: 'timestamp DESC');
+  }
+
+  Future<List<Map<String, dynamic>>> getRegionalMusicPlaysByState(String userId, String stateName) async {
+    if (kIsWeb) return _webMusicSessions.where((s) => s['user_id'] == userId && s['state_name'] == stateName).toList();
+    final db = await database;
+    return await db!.query('regional_music_plays',
+      where: 'user_id = ? AND state_name = ?',
+      whereArgs: [userId, stateName],
+      orderBy: 'timestamp DESC');
+  }
+
+  Future<Map<String, dynamic>> getRegionalMusicSummary(String userId) async {
+    final plays = await getRegionalMusicPlays(userId);
+    int totalDuration = 0;
+    int totalLoops = 0;
+    Map<String, int> stateDurations = {};
+    Map<String, int> stateLoops = {};
+    String mostPlayedState = 'None';
+    int maxStateDuration = 0;
+
+    for (var play in plays) {
+      int dur = play['duration_seconds'] as int? ?? 0;
+      int loops = play['loop_count'] as int? ?? 0;
+      String state = play['state_name'] as String? ?? 'Unknown';
+      totalDuration += dur;
+      totalLoops += loops;
+      stateDurations[state] = (stateDurations[state] ?? 0) + dur;
+      stateLoops[state] = (stateLoops[state] ?? 0) + loops;
+      if ((stateDurations[state] ?? 0) > maxStateDuration) {
+        maxStateDuration = stateDurations[state]!;
+        mostPlayedState = state;
+      }
+    }
+
+    return {
+      'total_plays': plays.length,
+      'total_duration_seconds': totalDuration,
+      'total_loops': totalLoops,
+      'most_played_state': mostPlayedState,
+      'state_durations': stateDurations,
+      'state_loops': stateLoops,
+    };
   }
 }
