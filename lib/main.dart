@@ -1,5 +1,5 @@
 import 'caregiver_advisor_screen.dart';
-import 'patient_chat_screen.dart'; // <--- ADD THIS
+import 'patient_chat_screen.dart'; 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
@@ -80,7 +80,7 @@ class DementiaCareApp extends StatelessWidget {
             // Route Logic: Send unregistered users to Login instead of Registration
             Widget initialScreen;
             if (!isRegistered) {
-              initialScreen = const LoginScreen(); // NEW DEFAULT
+              initialScreen = const LoginScreen(); 
             } else if (userRole == 'caregiver') {
               initialScreen = const CaregiverDashboard();
             } else {
@@ -569,7 +569,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
 ///                                            ///
-///        PATEINT DASHBOARD                   ///
+///        PATIENT DASHBOARD                   ///
 ///                                            ///
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
@@ -1946,8 +1946,9 @@ class _MemoryGameScreenState extends State<MemoryGameScreen> {
   Widget build(BuildContext context) {
     // Adjust layout based on how many cards exist
     int crossAxisCount = 4;
-    if (cards.length <= 4) crossAxisCount = 2;
-    else if (cards.length == 12) crossAxisCount = 3;
+    if (cards.length <= 4) {
+      crossAxisCount = 2;
+    } else if (cards.length == 12) crossAxisCount = 3;
 
     return Scaffold(
       appBar: AppBar(
@@ -7212,7 +7213,7 @@ class _CaregiverMusicInsightsScreenState extends State<CaregiverMusicInsightsScr
                           Icon(Icons.circle, size: 8, color: Colors.deepPurple.shade300),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: Text('${entry.key}', style: const TextStyle(fontSize: 14)),
+                            child: Text(entry.key, style: const TextStyle(fontSize: 14)),
                           ),
                           Text('$durStr · Looped $loops x',
                             style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),

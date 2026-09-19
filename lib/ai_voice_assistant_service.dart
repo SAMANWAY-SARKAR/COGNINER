@@ -29,7 +29,7 @@ class AiVoiceAssistantService {
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _isSpeechInitialized = false;
 
-  // Resolves backend address across Web, Android Emulator, and Desktop/iOS
+ 
   String get _baseUrl {
     if (kIsWeb) return 'http://127.0.0.1:8000';
     if (Platform.isAndroid) return 'http://10.0.2.2:8000';
@@ -37,7 +37,7 @@ class AiVoiceAssistantService {
   }
 
   Future<void> init() async {
-    // 1. Safe platform check that will not crash Chrome
+    
     if (!kIsWeb && Platform.isAndroid) {
       await _flutterTts.setEngine("com.google.android.tts");
     }
@@ -48,7 +48,7 @@ class AiVoiceAssistantService {
     _isSpeechInitialized = await _speech.initialize();
   }
 
- // Instance of AudioPlayer for playing server-generated speech
+ 
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   Future<void> speak(String text) async {

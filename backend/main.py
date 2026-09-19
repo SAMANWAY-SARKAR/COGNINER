@@ -41,10 +41,10 @@ def get_db():
         db.close()
 
 def get_language_fallback(text: str) -> str:
-    """Detects script in input text and returns localized fallback error response."""
+    
     if re.search(r'[\u0980-\u09FF]', text):  # Bengali Script
         return "আমার কানেক্ট করতে সমস্যা হচ্ছে, তবে আমি আপনার সাথেই আছি।"
-    elif re.search(r'[\u0900-\u097F]', text):  # Hindi (Devanagari) Script
+    elif re.search(r'[\u0900-\u097F]', text):  # Hindi Script
         return "मुझे अभी कनेक्ट करने में थोड़ी परेशानी हो रही है, लेकिन मैं आपके साथ हूँ।"
     return "I am having trouble connecting right now, but I am right here with you."
 
@@ -294,7 +294,7 @@ def caregiver_advisor(request: schemas.ChatRequest):
     try:
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-3.5-flash",
             contents=f"You are a compassionate dementia care advisor. The caregiver asks: {request.message}"
         )
         return schemas.ChatResponse(reply=response.text)
@@ -309,7 +309,7 @@ def patient_chat(request: schemas.ChatRequest):
     try:
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-3.5-flash",
             contents=(
                 "You are a warm, gentle, and comforting daily companion for an elderly person "
                 "with cognitive needs. Keep your answers very short, simple, reassuring, "
@@ -334,14 +334,14 @@ class VoiceAssistantResponse(BaseModel):
 @app.post("/voice-assistant/", response_model=VoiceAssistantResponse)
 def voice_assistant(request: VoiceAssistantRequest):
     try:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key=os.getenv("GEMINI_API_KEY")
         if not api_key:
             print("❌ ERROR: GEMINI_API_KEY not found! Check your .env file.")
             raise ValueError("API Key Missing")
 
         client = genai.Client(api_key=api_key)
         
-        # PROMPT FIX: Strictly force native Unicode scripts so the Flutter regex catches it.
+        
         prompt = f"""
 You are a warm, gentle, and empathetic AI voice companion inside a Dementia & Cognitive Care mobile app.
 
@@ -366,7 +366,7 @@ User speech: "{request.message}"
 Analyze the speech, select the appropriate action, and provide a comforting spoken response strictly following the script rules above.
 """
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-3.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -388,7 +388,7 @@ Analyze the speech, select the appropriate action, and provide a comforting spok
         print(f"Error Details: {e}")
         print(f"----------------------\n")
         
-        # Localized fallback based on user's input language script
+        
         fallback_speech = get_language_fallback(request.message)
         
         return VoiceAssistantResponse(
@@ -406,20 +406,20 @@ class SpeechRequest(BaseModel):
 @app.post("/generate-speech/")
 def generate_speech(request: SpeechRequest):
     try:
-        # 1. Detect if the text contains Bengali or Hindi characters to set the correct language accent
+        
         lang = 'en'
         if re.search(r'[\u0980-\u09FF]', request.text):
             lang = 'bn'  # Bengali
         elif re.search(r'[\u0900-\u097F]', request.text):
             lang = 'hi'  # Hindi
 
-        # 2. Generate audio using gTTS
+       
         tts = gTTS(text=request.text, lang=lang, slow=False)
         audio_fp = io.BytesIO()
         tts.write_to_fp(audio_fp)
         audio_fp.seek(0)
 
-        # 3. Stream the MP3 audio directly back to the client
+        
         return StreamingResponse(audio_fp, media_type="audio/mpeg")
         
     except Exception as e:
